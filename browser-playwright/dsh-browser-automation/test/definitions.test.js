@@ -198,7 +198,20 @@ test('client.js is syntactically valid JavaScript', () => {
   assert.doesNotThrow(() => new Function(source));
   assert.match(source, /window\.__ModuleLoader__\.load/);
   assert.match(source, /id: '@local\/dsh-browser-automation'/);
-  assert.match(source, /inject: \['sidebarRight', 'connection'\]/);
+  assert.match(source, /inject: \['sidebarRight'\]/);
+  // The bridge must stay document-relative: an absolute origin would break the
+  // Desktop `dsh-app://app/` carrier (the protocol is named only in the comment).
+  assert.match(source, /new URL\(`\$\{BRIDGE_PATH\}\$\{action\}`, document\.baseURI\)/);
+  assert.doesNotMatch(source, /fetch\(\s*[`'"]https?:/);
+});
+
+test('index.js mounts the bridge as a loopback-only route, not an authenticated RPC channel', () => {
+  const source = read('../index.js');
+  assert.match(source, /export const inject = \['tools', 'webServer'\]/);
+  assert.match(source, /ctx\.webServer\.register\(/);
+  assert.doesNotMatch(source, /connection\.rpc/);
+  assert.match(source, /isLoopback/);
+  assert.match(source, /sec-fetch-site/);
 });
 
 test('package.json wires both halves and the locale resources', () => {

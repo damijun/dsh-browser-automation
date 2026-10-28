@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { resolveCli, describeFailure, CliBridge, CliUnavailableError } from '../src/cli.js';
+import { resolveCli, resolveNode, describeFailure, CliBridge, CliUnavailableError } from '../src/cli.js';
 import { parseEvalOutput } from '../src/driver.js';
 
 /**
@@ -26,6 +26,43 @@ test('resolves the npm shim to the JavaScript entry, so no shell quoting is need
   const plan = resolveCli({ command: 'playwright-cli' });
   assert.match(plan.file, /node(\.exe)?$/i);
   assert.match(plan.prefix[0], /playwright-cli\.js$/);
+});
+
+/**
+ * The plugin runs inside the DSH Desktop Host, which is Electron: there
+ * `process.execPath` is `DeepSeek Harness.exe`, and handing it a `.js` entry
+ * makes the CLI's own daemon child die with "too many arguments". A plain Node
+ * must be preferred whenever the host itself is not Node.
+ */
+test('under an Electron host the interpreter is a node binary from PATH, with an env fallback', () => {
+  const saved = process.versions.electron;
+  try {
+    Object.defineProperty(process.versions, 'electron', { value: '39.0.0', configurable: true });
+
+    // A PATH that holds node must yield that node, with no env override.
+    const withNode = resolveNode({ env: { PATH: path.dirname(process.execPath) } });
+    assert.match(withNode.file, /[\\/]node(\.exe)?$/i);
+    assert.equal(withNode.env, undefined);
+
+    // No node anywhere: the Electron binary runs as node only with this env flag.
+    const withoutNode = resolveNode({ env: { PATH: path.join(scratch, 'empty-dir') } });
+    assert.deepEqual(withoutNode, {
+      file: process.execPath,
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    });
+
+    // A plain Node host always runs the entry itself, regardless of PATH.
+    delete process.versions.electron;
+    assert.deepEqual(resolveNode({ env: { PATH: '' } }), { file: process.execPath });
+  } finally {
+    if (saved === undefined) delete process.versions.electron;
+    else Object.defineProperty(process.versions, 'electron', { value: saved, configurable: true });
+  }
+});
+
+test('an explicit nodePath wins, and a wrong one fails loudly', () => {
+  assert.equal(resolveNode({ explicit: process.execPath }).file, process.execPath);
+  assert.throws(() => resolveNode({ explicit: path.join(scratch, 'no-node.exe') }), CliUnavailableError);
 });
 
 test('an explicit shim path resolves to the JS entry it points at', () => {

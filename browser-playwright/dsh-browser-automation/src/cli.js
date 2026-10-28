@@ -70,27 +70,59 @@ function nodeEntryFromShim(shim) {
 }
 
 /**
+ * Which Node should run the CLI's JavaScript entry.
+ *
+ * This plugin runs inside the DSH Desktop Host, which is Electron: there
+ * `process.execPath` is `DeepSeek Harness.exe`, not `node`. Handing a `.js` entry
+ * to that binary makes Electron parse the argv itself, and the CLI's own daemon
+ * child then dies with "too many arguments". So a real `node` from PATH wins;
+ * `ELECTRON_RUN_AS_NODE` is the last resort.
+ *
+ * @param {{ explicit?: string, env?: NodeJS.ProcessEnv }} [options]
+ * @returns {{ file: string, env?: Record<string, string> }}
+ */
+export function resolveNode(options = {}) {
+  const { explicit, env = process.env } = options;
+  if (explicit) {
+    if (!isFile(explicit)) throw new CliUnavailableError(`Configured nodePath does not exist: ${explicit}`);
+    return { file: explicit };
+  }
+  if (process.versions?.electron === undefined) return { file: process.execPath };
+
+  const win = process.platform === 'win32';
+  const names = win ? ['node.exe', 'node'] : ['node'];
+  for (const directory of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    for (const name of names) {
+      const candidate = path.join(directory, name);
+      if (isFile(candidate)) return { file: candidate };
+    }
+  }
+  return { file: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } };
+}
+
+/**
  * Find the CLI once and describe how to start it.
  *
  * @param {object} options
  * @param {string} options.command  configured command name or path
  * @param {string} [options.nodePath] interpreter for the resolved `.js` entry
  * @param {NodeJS.ProcessEnv} [options.env]
- * @returns {{ file: string, prefix: string[], shim?: string }}
+ * @returns {{ file: string, prefix: string[], shim?: string, env?: Record<string, string> }}
  */
 export function resolveCli(options) {
-  const { command, nodePath = process.execPath, env = process.env } = options;
+  const { command, nodePath, env = process.env } = options;
   if (!command) throw new CliUnavailableError('No playwright-cli command configured.');
+  const node = () => resolveNode({ explicit: nodePath, env });
 
   // 1. An explicit path: a JS entry, a shim, or a real executable.
   if (command.includes('/') || command.includes('\\') || isFile(command)) {
     if (/\.c?js$/i.test(command)) {
       if (!isFile(command)) throw new CliUnavailableError(`playwright-cli entry not found at ${command}.`);
-      return { file: nodePath, prefix: [command] };
+      return { ...node(), prefix: [command] };
     }
     if (/\.(cmd|bat|ps1)$/i.test(command)) {
       const entry = nodeEntryFromShim(command);
-      if (entry) return { file: nodePath, prefix: [entry], shim: command };
+      if (entry) return { ...node(), prefix: [entry], shim: command };
       if (!isFile(command)) throw new CliUnavailableError(`playwright-cli shim not found at ${command}.`);
       return { file: command, prefix: [], shim: command };
     }
@@ -111,7 +143,7 @@ export function resolveCli(options) {
       if (!isFile(candidate)) continue;
       if (/\.(cmd|bat|ps1)$/i.test(candidate)) {
         const entry = nodeEntryFromShim(candidate);
-        if (entry) return { file: nodePath, prefix: [entry], shim: candidate };
+        if (entry) return { ...node(), prefix: [entry], shim: candidate };
         continue;
       }
       if (win && !extensions.some((ext) => candidate.toLowerCase().endsWith(ext.toLowerCase()))) {
@@ -165,7 +197,8 @@ export class CliBridge {
   get resolved() {
     if (!this.plan) {
       this.plan = resolveCli({ command: this.command, nodePath: this.nodePath });
-      this.log(`playwright-cli resolved to ${this.plan.file} ${this.plan.prefix.join(' ')}`.trim());
+      const entry = this.plan.prefix.length > 0 ? ` ${this.plan.prefix.join(' ')}` : '';
+      this.log(`playwright-cli resolved to ${this.plan.file}${entry}`);
     }
     return this.plan;
   }
@@ -235,7 +268,7 @@ export class CliBridge {
           cwd,
           windowsHide: true,
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: process.env,
+          env: plan.env ? { ...process.env, ...plan.env } : process.env,
         });
       } catch (error) {
         reject(

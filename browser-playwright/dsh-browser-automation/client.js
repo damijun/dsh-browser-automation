@@ -8,12 +8,13 @@ window.__ModuleLoader__.load({
      * the one thing the Host cannot do: create a sidebar tab, which is
      * `ctx.sidebarRight.openTab('browser', { params: { url } })`.
      *
-     * The two halves meet over the app's own authenticated RPC channel
-     * (`ctx.connection.rpc`), which resolves to a document-relative URL — so it
-     * behaves the same in the Web app and under Desktop's `dsh-app://app/`
-     * carrier, with no origin guessing and no unauthenticated route.
+     * The two halves meet over a route the Host serves on the app's own origin.
+     * Requests are **document-relative**, which is what makes one code path work
+     * in both carriers: the Web app resolves them against its own origin, and
+     * Desktop forwards `dsh-app://app/<path>` to the Host's loopback port. The
+     * route only answers loopback sockets and refuses cross-site requests.
      */
-    const CHANNEL = '/dsh-browser-automation';
+    const BRIDGE_PATH = 'dsh-browser-automation/bridge/';
     const CLIENT_ID_KEY = 'dsh-browser-automation:clientId';
     const POLL_WAIT_MS = 15_000;
 
@@ -44,6 +45,40 @@ window.__ModuleLoader__.load({
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     /**
+     * One bridge call. Resolves the route against the document base so a mounted
+     * sub-path and the Desktop custom scheme both work unchanged.
+     *
+     * @param {string} action
+     * @param {Record<string, unknown>} body
+     * @param {number} [timeoutMs]
+     */
+    async function call(action, body, timeoutMs = 20_000) {
+      const url = new URL(`${BRIDGE_PATH}${action}`, document.baseURI).href;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => '');
+          throw new Error(`bridge ${action} returned HTTP ${response.status} ${detail.slice(0, 200)}`);
+        }
+        const reply = await response.json();
+        if (!reply || reply.ok !== true) {
+          throw new Error(reply && reply.error ? reply.error : `bridge ${action} failed`);
+        }
+        return reply.value;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    /**
      * @param {import('@deepseek-ai/cordis').Context} ctx
      */
     function apply(ctx) {
@@ -71,25 +106,9 @@ window.__ModuleLoader__.load({
         };
       }
 
-      /**
-       * Call one bridge endpoint and unwrap the envelope.
-       *
-       * @param {string} endpoint
-       * @param {Record<string, unknown>} payload
-       * @param {AbortSignal} [signal]
-       */
-      async function call(endpoint, payload, signal) {
-        const reply = await ctx.connection.rpc.call(CHANNEL, endpoint, payload, signal);
-        if (!reply || reply.ok !== true) {
-          const message = reply && reply.error && reply.error.message ? reply.error.message : 'bridge call failed';
-          throw new Error(message);
-        }
-        return reply.value;
-      }
-
       /** Announce this page; retried by the loop until the Host answers. */
       async function announce() {
-        await call('hello', { clientId: id, ...capabilities() });
+        await call('hello', { clientId: id, ...capabilities() }, 10_000);
         if (!connected) {
           connected = true;
           console.info('[dsh-browser-automation] connected to the Host bridge');
@@ -157,7 +176,7 @@ window.__ModuleLoader__.load({
         while (!stopped) {
           try {
             if (!connected) await announce();
-            const reply = await call('poll', { clientId: id, waitMs: POLL_WAIT_MS });
+            const reply = await call('poll', { clientId: id, waitMs: POLL_WAIT_MS }, POLL_WAIT_MS + 10_000);
             connected = true;
             if (stopped) return;
             const command = reply && reply.command;
@@ -198,7 +217,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['sidebarRight', 'connection'],
+      inject: ['sidebarRight'],
       apply,
     };
   },
