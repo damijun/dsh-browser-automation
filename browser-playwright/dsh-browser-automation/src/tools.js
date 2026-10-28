@@ -185,7 +185,9 @@ export function createTools(runtime) {
     {
       name: 'browser_close',
       description:
-        'Close one sidebar browser tab by pageId. This closes the tab only; it never detaches playwright-cli and never closes DSH.',
+        'Close one sidebar browser tab by pageId. It removes the DSH sidebar tab itself, so nothing is left behind. ' +
+        'It never detaches playwright-cli and never closes DSH. ' +
+        'Fails when the DSH page half is not connected, because only the page can remove a sidebar tab.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -201,11 +203,14 @@ export function createTools(runtime) {
           properties: {
             pageId: string(),
             closed: boolean(),
-            index: integer(),
+            tabId: {
+              oneOf: [{ type: 'string' }, { type: 'null' }],
+              description: 'The sidebar tab id that was removed, when the page could report it.',
+            },
           },
           required: ['pageId', 'closed'],
         },
-        render: renderWith((value) => `Closed tab ${value.index} (pageId ${value.pageId}).`),
+        render: renderWith((value) => `Closed the sidebar tab for ${value.pageId}.`),
       },
       async execute(args, exec) {
         requireSession(exec);

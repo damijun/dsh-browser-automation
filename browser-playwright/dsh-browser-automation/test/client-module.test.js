@@ -125,6 +125,7 @@ function harness(options = {}) {
       active: () => overrides.active ?? { id: 'tab1', kind: 'browser', contentId: 'sidebar://browser/u1' },
       openTab: (kind, opts) => opened.push({ kind, opts }),
       focus: (tabId) => calls.push(['focus', tabId]),
+      close: (tabId) => calls.push(['close', tabId]),
       isExpanded: () => expanded,
       toggleExpanded: toggle
         ? () => toggle(calls, () => (expanded = true))
@@ -304,7 +305,54 @@ test('prepare-capture falls back to layout.openRightbar when the toggle throws',
 });
 
 /**
- * A collapsed panel slides the whole column out of the viewport while its content
+ * Closing is a UI action: `playwright-cli tab-close` only destroys the CDP target
+ * and leaves the sidebar tab as an empty "页面加载失败" shell, so the page half must
+ * remove the tab itself.
+ */
+function closeHarness(options) {
+  let delivered = false;
+  return harness({
+    ...options,
+    reply: (url) => {
+      if (url.endsWith('/poll') && !delivered) {
+        delivered = true;
+        return {
+          ok: true,
+          value: { command: { requestId: 'r4', kind: 'close-page', pageId: 'dshpg-aaaaaa-00000001' } },
+        };
+      }
+      return { ok: true, value: { command: null } };
+    },
+  });
+}
+
+test('close-page removes the tab through the sidebar controller', async () => {
+  const { requests, start, stop } = closeHarness({
+    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+  });
+  const { calls } = start();
+  await settle(80);
+  stop();
+
+  assert.equal(JSON.stringify(calls), JSON.stringify([['close', 'tab7']]));
+  const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
+  assert.equal(value.closed, true);
+  assert.equal(value.tabId, 'tab7');
+});
+
+test('close-page reports why it could not find the tab', async () => {
+  const { requests, start, stop } = closeHarness({ chips: [] });
+  const { calls } = start();
+  await settle(80);
+  stop();
+
+  assert.deepEqual(calls, []);
+  const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
+  assert.equal(value.closed, false);
+  assert.match(value.reason, /no sidebar tab chip carries this page/);
+});
+
+/** A collapsed panel slides the whole column out of the viewport while its content
  * keeps a real box (measured live: x=959 with a 958px-wide window). Size alone
  * therefore cannot decide visibility, which is what this pins down.
  */
@@ -362,5 +410,6 @@ test('an empty poll answer does not spin the loop', async () => {
   // hello + a handful of polls; without the floor this would be hundreds.
   assert.ok(requests.length <= 8, `the loop spun: ${requests.length} requests in 300ms`);
 });
+
 
 

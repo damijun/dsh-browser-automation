@@ -142,16 +142,20 @@ test('every tool definition satisfies the runtime schema subset', () => {
 test('every field the runtime can add is declared in the output schema', () => {
   const extras = {
     browser_claim: ['replacedExistingPageId'],
+    browser_close: ['tabId'],
     browser_list: ['warning'],
     browser_status: ['bridgeError'],
   };
+  // `browser_close` is a UI action that does not go through Runtime.onPage, so it
+  // reports no tab index — the one page-scoped tool where that is correct.
+  const notOnPage = new Set(['browser_close']);
   const problems = [];
   for (const tool of createTools(stubRuntime)) {
     const schema = tool.output.schema;
     const declared = new Set(Object.keys(schema.properties ?? {}));
-    // Every page-scoped tool goes through Runtime.onPage, which adds these.
+    // Every other page-scoped tool goes through Runtime.onPage, which adds these.
     const pageScoped = Object.hasOwn(tool.parameters.properties ?? {}, 'pageId');
-    if (pageScoped) {
+    if (pageScoped && !notOnPage.has(tool.name)) {
       for (const field of ['pageId', 'index']) {
         if (!declared.has(field)) problems.push(`${tool.name}: missing output field ${field}`);
       }

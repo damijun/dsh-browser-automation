@@ -313,14 +313,29 @@ export class Runtime {
     return { count: filtered.length, pages: filtered, warning };
   }
 
-  /** @param {{ pageId: string }} request */
+  /**
+   * Close one sidebar browser tab.
+   *
+   * This is a UI action, not a CLI one: `playwright-cli tab-close` only destroys the
+   * CDP target, which leaves the sidebar tab behind as an empty shell ("页面加载失败")
+   * that keeps focus. Only `ctx.sidebarRight.close(tabId)` removes the tab, so the
+   * page half performs it and the CLI is not involved at all.
+   *
+   * @param {{ pageId: string }} request
+   */
   async closePage(request) {
-    const driver = this.ensureDriver();
     const pageId = requirePageId(request.pageId);
-    const hit = await driver.resolve(pageId);
-    await this.cli.run(['--raw', 'tab-close', String(hit.index)]);
+    requireBridge(this.bridge, 'browser_close');
+    const result = await this.bridge.request('close-page', { pageId }, { timeoutMs: 8_000 });
+    if (!result || result.closed !== true) {
+      throw new Error(
+        `The DSH page did not close this tab: ${result?.reason ?? 'no reason reported'}.\n` +
+          'browser_close removes the sidebar tab itself (the CLI cannot: closing the CDP target leaves an ' +
+          'empty tab behind). Use browser_list to see what is still open, or close the tab in the sidebar.',
+      );
+    }
     this.manager.unregister(pageId);
-    return { pageId, closed: true, index: hit.index };
+    return { pageId, closed: true, tabId: result.tabId ?? null };
   }
 
   /**

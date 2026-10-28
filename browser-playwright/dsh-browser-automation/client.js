@@ -328,6 +328,37 @@ window.__ModuleLoader__.load({
         return { visible: false, tabId, expanded, expandedNow, expandVia, expandError };
       }
 
+      /**
+       * Close the sidebar tab itself.
+       *
+       * `playwright-cli tab-close` only destroys the CDP target: the sidebar tab
+       * survives as an empty shell showing "页面加载失败；请刷新重试或在系统浏览器中打开。",
+       * and stays focused. Only the sidebar controller can remove the tab, so this
+       * is a UI action like `openTab`, not a CLI one.
+       *
+       * @param {string} pageId
+       */
+      function closePage(pageId) {
+        const service = sidebar();
+        if (!service || typeof service.close !== 'function') {
+          return { closed: false, tabId: null, reason: 'the sidebar-right client service cannot close tabs' };
+        }
+        const tabId = tabIdFor(pageId);
+        if (!tabId) {
+          return {
+            closed: false,
+            tabId: null,
+            reason: 'no sidebar tab chip carries this page (the tab may already be gone, or its title lost the marker)',
+          };
+        }
+        try {
+          service.close(tabId);
+        } catch (error) {
+          return { closed: false, tabId, reason: error && error.message ? error.message : String(error) };
+        }
+        return { closed: true, tabId };
+      }
+
       /** @param {{ requestId: string, kind: string, url?: string, pageId?: string }} command */
       async function handle(command) {
         if (command.kind === 'open-tab') {
@@ -341,6 +372,11 @@ window.__ModuleLoader__.load({
         }
         if (command.kind === 'prepare-capture') {
           const value = await prepareCapture(String(command.pageId ?? ''));
+          await call('result', { requestId: command.requestId, ok: true, value });
+          return;
+        }
+        if (command.kind === 'close-page') {
+          const value = closePage(String(command.pageId ?? ''));
           await call('result', { requestId: command.requestId, ok: true, value });
           return;
         }

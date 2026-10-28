@@ -54,7 +54,7 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 | `browser_open {url}` | 通过 DSH UI 新建侧边栏标签页 → 注入标记 → 返回 `pageId`。桥不可用即报错，**不会**复用现有标签页 |
 | `browser_claim {note?}` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回注入前的标题；替换旧标记，换新 `pageId` |
 | `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页），带实时索引 |
-| `browser_close {pageId}` | 关掉这一个标签页并注销登记 |
+| `browser_close {pageId}` | **移除 DSH 侧边栏标签页本身**（`ctx.sidebarRight.close(tabId)`）并注销登记；不是 CLI 的 `tab-close` |
 | `browser_snapshot {pageId, depth?}` | 可访问性快照（含 `[ref=…]`），内容原样返回，不做二次压缩 |
 | `browser_screenshot {pageId, fullPage?, target?}` | 截图存盘，返回绝对路径（不内联字节） |
 | `browser_click {pageId, ref, button?, double?, modifiers?}` | 点击 |
@@ -207,6 +207,11 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
     让首帧出来 → 用 Playwright API `page.screenshot({ timeout: 25000 })` 落盘。**截完不切回**，侧边栏停在被截的那页。
   图片尺寸 = 该标签页在侧边栏里的实际尺寸（例如 430×915），不是固定视口。
   只是读内容时用 `browser_snapshot`，它不依赖合成，永远可用。
+- **关闭标签页必须走 DSH，不能走 CLI**。`playwright-cli tab-close <index>` 只销毁 CDP target，
+  DSH 侧边栏的标签页会留下来变成空壳（显示"页面加载失败；请刷新重试或在系统浏览器中打开。"），
+  而且仍然保持聚焦。只有 `ctx.sidebarRight.close(tabId)` 能真正移除它，所以 `browser_close` 是
+  **UI 动作**（走页面桥），完全不用 CLI；桥不可用时它直接报错，不会退化成 `tab-close`。
+  （旧版本留下的空壳页没有标记，`pageId` 也指不到它，需要手动点标签上的 × 关掉。）
 - **`detach` 结束自动化会话**：DSH 与它的标签页毫发无损，但之后再操作会以全新的 attach 视图开始 ——
   已有的 `pageId` 不再解析（实测：detach 后重新 attach，`tab-list` 里看不到原来的 webview 目标），
   需要重新 `browser_open` / `browser_claim`。
@@ -227,20 +232,22 @@ cd dsh-browser-automation
 node --test
 ```
 
-75 个用例，覆盖：
+82 个用例，覆盖：
 
 - `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、零命中/多命中、索引漂移）；
 - 标记脚本（追加、幂等、剥旧标记、页面改标题后补回、更新 `<title>` 的场景）——用 `node:vm` + 假 DOM 真跑；
 - **两种启动模式的约束**：桥不在/从未连上/掉线三种状态都必须报错且**不碰 CLI**（断言没有任何
   `tab-select`/`goto`，也没登记 pageId）；claim 在"看不见页面"、"页面还没进 tab-list"、"可见 URL 带尾斜杠或 hash"
   各种情况下的行为；claim 换标记后旧 pageId 必须注销；
+- **关闭必须是 UI 动作**：断言 `browser_close` 全程**零 CLI 调用**；页面侧找不到 chip 时报原因且不注销登记；
+  桥不可用时直接报错（不退化成 `tab-close`）；非法 pageId 先被拒；
 - **截图的两条路径**：可见页走 CLI 命令、隐藏页走"补 tabId→focus→长超时"；`fullPage` 透传；
-  拿不到 tabId 时老实走普通路径；桥断了仍能走普通路径；
+  `target`（元素截图）必须留在 CLI 路径上；拿不到 tabId 时老实走普通路径；桥断了仍能走普通路径；
 - **client 半边的 harness**：把真实的 `client.js` 按页面的方式载入，用假 `__ModuleLoader__` + 假
   `ctx.sidebarRight`/`ctx.layout` 跑 `apply()`。断言 `hello` 用文档相对 URL、`open-tab` 只调一次
   `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/找不到 chip/toggle 抛错"五种情况下的动作序列、
-  **collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、失败只报一次、空轮询不空转。
-  这一层就是"页面里才炸"的那类 bug 的护栏；
+  `close-page` 真的调 `close(tabId)`、**collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、
+  失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
 - 工具定义（自实现一遍 `assertSupportedJsonSchema` 子集，避免"装上才发现 schema 非法"）、渲染器、命名、无 `index`/`tab-new`/`targetId`；
   以及"运行时加的字段必须在 output schema 里声明"（这条抓到过两次真 bug）；
 - CliBridge（shim → JS 入口解析、**Electron 里必须换用 PATH 的 node**、argv 不被引号破坏、非零退出、超时、取消、失败信息去掉 Node 栈）；
@@ -255,7 +262,7 @@ node --test
 | T2 双会话隔离 | ✅ 子会话拿到 `dshpg-82ae30-…`；我这边 `scope=session` 看不到它，`scope=all` 能看到 |
 | T3 只传 pageId、内部解析索引 | ✅ 全程未手输索引 |
 | T4 `snapshot → click → fill/press → goto` | ✅ 点击跨域跳转到 iana.org 后标记仍在；`run_code`+`setContent` 后标记被补回 |
-| T4 `screenshot` | ✅ 可见标签页写出 49KB PNG；隐藏标签页超时（见 §7） |
+| T4 `screenshot` | ✅ 可见标签页走 CLI 命令；隐藏标签页与收起侧边栏都能拍（见 §7） |
 | T5 索引漂移 | ✅ 关掉 index 1 后，原 index 2 的 pageId 仍能解析 |
 | T6 不依赖 `tab-new` / `targetId` | ✅ 单测断言源码中不出现 |
 | T7 `detach` 不杀 DSH | ✅ 应用存活；重新 attach 后需重新 open/claim（见 §7） |
@@ -263,6 +270,7 @@ node --test
 | T9 关闭后 `PAGE_NOT_FOUND` | ✅ 错误信息带当前 tab 列表摘要与下一步建议 |
 | T10 解析单测 | ✅ 含 `[]()` 标题、`(current)`、多命中 |
 | `browser_status.modes` | ✅ 实测 `{open:true, claim:false}`（无可见浏览器页时 claim 明确不可用），claim 随之给出"先展开侧边栏"的报错 |
+| `browser_close` 真机 | ✅ 关掉后侧边栏 chip 真的少一个（tab48 消失）、webview 从 2 个变 1 个、CLI 视图同步变 2 行，**没有留下"页面加载失败"空壳**；被关的 pageId 立刻 `PAGE_NOT_FOUND`，另一页照常工作 |
 
 ---
 
