@@ -117,9 +117,13 @@ export function resolveIndex(output, pageId) {
     return { index: tab.index, title: tab.title, url: tab.url, current: tab.current, tabs };
   }
   if (matches.length === 0) {
+    const visible = tabs.filter((tab) => /^https?:/i.test(tab.url));
     const error = new Error(
-      `pageId ${pageId} is not present in playwright-cli's tab list. ` +
-        'The tab may have been closed by the user; open or claim a page again.',
+      `pageId ${pageId} is not present in playwright-cli's tab list ` +
+        `(${tabs.length} tab(s) visible, ${visible.length} of them web pages). ` +
+        'The tab may have been closed by the user, the page may have navigated before the marker was ' +
+        're-applied, or the CLI may have been detached (detach ends the automation session). ' +
+        'Call browser_list to see what is reachable, then browser_open or browser_claim.',
     );
     Object.assign(error, { code: 'PAGE_NOT_FOUND', pageId, tabs });
     throw error;

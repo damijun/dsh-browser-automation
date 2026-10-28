@@ -222,7 +222,13 @@ export class Runtime {
   }
 
   /**
-   * Take over the tab playwright-cli currently drives.
+   * Take over the page the user is looking at.
+   *
+   * Playwright's current tab is only a hint: it resets to the application page on
+   * every re-attach and never follows a sidebar tab switch, so the authoritative
+   * answer to "which page is the user on" comes from the page half, which reports
+   * the visible carrier's URL. The CLI current tab is still preferred when it *is*
+   * a web page, because it is the tab the last operation left on screen.
    *
    * @param {{ sessionId: string, note?: string, signal?: AbortSignal }} request
    */
@@ -230,34 +236,31 @@ export class Runtime {
     const driver = this.ensureDriver();
     const listing = await this.attach(request.signal);
     const current = listing.tabs.find((tab) => tab.current);
-    if (!current) {
+    const target = /^https?:/i.test(current?.url ?? '') ? current : await this.visibleTab(listing.tabs);
+    if (!target) {
       throw new Error(
-        'playwright-cli reports no current tab, so there is nothing to claim. Open the Browser tab in DSH first, ' +
-          'or use browser_open to create one.',
+        'Could not find the page you have open. Either the sidebar is not showing a web page, or the DSH page ' +
+          'has not reported it yet. Open the Browser tab in DSH, or use browser_open to create one.' +
+          (current ? ` playwright-cli's current tab is "${current.title}" (${current.url}).` : ''),
       );
     }
-    if (!/^https?:/i.test(current.url)) {
-      throw new Error(
-        `The current tab is not a web page (${current.title} — ${current.url}). ` +
-          'Switch the DSH sidebar to the browser tab you want to take over, then call browser_claim again.',
-      );
-    }
-    const previousIds = extractPageIds(current.title);
+    const previousIds = extractPageIds(target.title);
     const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
-    const originalTitle = current.title.replace(/\s*\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/g, '').trim();
-    await this.cli.run(['--raw', 'tab-select', String(current.index)]);
-    const marked = await this.injectMarker(current, pageId);
+    const originalTitle = target.title.replace(/\s*\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/g, '').trim();
+    await this.cli.run(['--raw', 'tab-select', String(target.index)]);
+    const marked = await this.injectMarker(target, pageId);
     for (const previous of previousIds) this.manager.unregister(previous);
     this.manager.register({
       pageId,
       sessionId: request.sessionId,
-      url: current.url,
+      url: target.url,
       title: originalTitle,
       source: 'claim',
+      tabId: target.tabId ?? null,
     });
-    // Learn which sidebar tab this is, so a later screenshot can focus it. The
-    // claim path is CLI-only, so this is the first moment the page can be asked.
-    if (this.bridge) {
+    // When the page half supplied the tab id it also became the screenshot focus
+    // target; otherwise ask once, now that the page has something to report.
+    if (!target.tabId && this.bridge) {
       this.bridge
         .request('ping', {}, { timeoutMs: 4_000 })
         .then((caps) => {
@@ -268,11 +271,31 @@ export class Runtime {
     return {
       pageId,
       title: originalTitle,
-      url: current.url,
-      index: current.index,
+      url: target.url,
+      index: target.index,
       note: request.note,
       replacedExistingPageId: previousIds[0],
     };
+  }
+
+  /**
+   * The tab the user is actually looking at, as reported by the page half.
+   *
+   * @param {import('./tab-list.js').TabEntry[]} tabs
+   * @returns {Promise<(import('./tab-list.js').TabEntry & { tabId: string | null }) | undefined>}
+   */
+  async visibleTab(tabs) {
+    if (!this.bridge?.hasClient()) return undefined;
+    const caps = await this.bridge.request('ping', {}, { timeoutMs: 5_000 }).catch(() => undefined);
+    const url = caps?.visible?.url;
+    if (typeof url !== 'string' || !/^https?:/i.test(url)) return undefined;
+    const candidates = tabs.filter((tab) => /^https?:/i.test(tab.url));
+    const match = candidates.find((tab) => tab.url === url) ?? candidates.find((tab) => samePage(tab.url, url));
+    if (!match) {
+      this.log(`the page shows ${url}, but no tab in the CLI list matches it`);
+      return undefined;
+    }
+    return { ...match, tabId: caps?.activeTabId ?? null };
   }
 
   /**
@@ -350,13 +373,23 @@ export class Runtime {
   async screenshot(request) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const file = path.join(this.ensureDriver().cli.workdir(), `screenshot-${stamp}.png`);
-    // A sidebar tab that is not in front has no compositor surface, so Chromium
-    // cannot capture it and Playwright times out. Ask the page to focus it first.
+    // Chromium can only capture a surface it is compositing: a sidebar tab that is
+    // hidden behind another tab in the same pane has none, and `page.screenshot()`
+    // waits forever for it. Ask the page to bring the tab to the front first, then
+    // give React one commit to actually swap the visible body. This is best-effort
+    // — the tab id is unknown for a claimed page until the page reports it — so the
+    // failure path below still tells the user what to do by hand.
     const record = this.manager.get(request.pageId);
+    let focusRequested = false;
     if (record?.tabId && this.bridge?.hasClient()) {
-      await this.bridge
+      focusRequested = await this.bridge
         .request('focus-tab', { tabId: record.tabId }, { timeoutMs: 4_000 })
-        .catch((error) => this.log(`could not focus ${record.tabId}: ${error.message}`));
+        .then(() => true)
+        .catch((error) => {
+          this.log(`could not focus ${record.tabId}: ${error.message}`);
+          return false;
+        });
+      if (focusRequested) await sleep(350);
     }
     return this.onPage(
       request.pageId,
@@ -369,10 +402,12 @@ export class Runtime {
           );
         } catch (error) {
           if (/Timeout/i.test(error.message)) {
+            const tried = focusRequested ? ' The plugin already asked DSH to bring it to the front.' : '';
             throw new Error(
-              `The browser could not capture this tab (${error.message}). A sidebar tab that is not in front ` +
-                'has no rendering surface; bring it to the front in the DSH sidebar and retry. ' +
-                'browser_snapshot reads the page without capturing it and always works.',
+              `The browser could not capture this tab (${error.message}). Chromium only captures a surface it is ` +
+                'compositing, and a sidebar tab hidden behind another tab in the same pane has none.' +
+                `${tried} Switch the sidebar to this tab and retry. ` +
+                'browser_snapshot reads the same page without capturing pixels and always works.',
             );
           }
           throw error;
@@ -492,7 +527,10 @@ export class Runtime {
         await driver.detach();
         this.attached = false;
         base.attached = false;
-        base.note = 'Detached. The DSH application and its tabs are untouched.';
+        base.note =
+          'Detached. The DSH application and its tabs are untouched, but this ends the automation session: ' +
+          'the existing pageIds stop resolving, and a later call re-attaches with a fresh view ' +
+          '(open or claim a page again to continue).';
       } catch (error) {
         base.note = `Detach failed: ${error.message}`;
       }
@@ -565,6 +603,21 @@ function safeUrl(raw) {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Whether two URLs address the same document, ignoring a hash and the trailing
+ * slash the two sides may disagree about.
+ *
+ * @param {string} a
+ * @param {string} b
+ */
+export function samePage(a, b) {
+  const left = safeUrl(a);
+  const right = safeUrl(b);
+  if (!left || !right) return false;
+  const normalize = (url) => `${url.origin}${url.pathname.replace(/\/$/, '')}${url.search}`;
+  return normalize(left) === normalize(right);
 }
 
 /** @param {string} pageId */

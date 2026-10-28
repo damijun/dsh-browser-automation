@@ -89,6 +89,42 @@ window.__ModuleLoader__.load({
 
       const sidebar = () => ctx.sidebarRight;
 
+      /**
+       * The web page the user is actually looking at.
+       *
+       * Playwright's "current tab" is its own bookkeeping and has nothing to do
+       * with which sidebar tab is visible — it also resets to the application page
+       * whenever the CLI re-attaches. `browser_claim` needs the visible page, and
+       * the only surface that reports it is the carrier element itself: in Desktop
+       * a `<webview>` (whose `getURL()`/`getTitle()` the shell also uses), in Web
+       * the browser iframe.
+       *
+       * @returns {{ url: string | null, title: string | null } | null}
+       */
+      function visiblePage() {
+        try {
+          const views = [...document.querySelectorAll('webview')];
+          for (const view of views) {
+            const rect = view.getBoundingClientRect();
+            if (rect.width < 1 || rect.height < 1) continue;
+            const style = window.getComputedStyle(view);
+            if (style.display === 'none' || style.visibility === 'hidden') continue;
+            const url = typeof view.getURL === 'function' ? view.getURL() : null;
+            const title = typeof view.getTitle === 'function' ? view.getTitle() : null;
+            if (url) return { url, title };
+          }
+          const frames = [...document.querySelectorAll('iframe[data-sidebar-browser-frame]')];
+          for (const frame of frames) {
+            const rect = frame.getBoundingClientRect();
+            if (rect.width < 1 || rect.height < 1) continue;
+            return { url: frame.getAttribute('src') ?? null, title: null };
+          }
+        } catch (error) {
+          /* the carrier may be absent or restricted; capability stays null */
+        }
+        return null;
+      }
+
       function capabilities() {
         const service = sidebar();
         let mounted = null;
@@ -107,6 +143,7 @@ window.__ModuleLoader__.load({
           hasSidebarRight: Boolean(service),
           mounted,
           activeTabId,
+          visible: visiblePage(),
           origin: window.location.origin,
           href: window.location.href,
           protocol: window.location.protocol,

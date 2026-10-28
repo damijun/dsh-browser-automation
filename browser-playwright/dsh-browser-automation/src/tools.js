@@ -118,6 +118,9 @@ export function createTools(runtime) {
             url: string('Current URL.'),
             index: integer('Current playwright-cli tab index (informational only).'),
             note: string('The note that was passed in, if any.'),
+            replacedExistingPageId: string(
+              'Present when the tab already carried a marker: the pageId it lost, now unregistered.',
+            ),
           },
           required: ['pageId', 'url', 'index'],
         },
@@ -155,6 +158,7 @@ export function createTools(runtime) {
               type: 'array',
               items: { type: 'object', additionalProperties: true },
             },
+            warning: string('Present when the tab list could not be read; explains why.'),
           },
           required: ['count', 'pages'],
         },

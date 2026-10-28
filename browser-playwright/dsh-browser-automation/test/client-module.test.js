@@ -32,8 +32,28 @@ function harness(options = {}) {
       location: { origin: 'dsh-app://app', href: 'dsh-app://app/', protocol: 'dsh-app:' },
       crypto: { randomUUID: () => 'client-1' },
       sessionStorage: { getItem: () => null, setItem: () => {} },
+      getComputedStyle: () => ({ display: 'flex', visibility: 'visible' }),
     },
-    document: { baseURI: 'dsh-app://app/' },
+    // One document object, as in a real page: baseURI plus the carriers. Two of
+    // them, one hidden (zero box), so visible-page detection has a real choice.
+    document: {
+      baseURI: 'dsh-app://app/',
+      querySelectorAll: (selector) => {
+        if (selector !== 'webview') return [];
+        return [
+          {
+            getBoundingClientRect: () => ({ width: 0, height: 0 }),
+            getURL: () => 'https://hidden.test/',
+            getTitle: () => 'Hidden',
+          },
+          {
+            getBoundingClientRect: () => ({ width: 800, height: 600 }),
+            getURL: () => 'https://visible.test/page',
+            getTitle: () => 'Visible page',
+          },
+        ];
+      },
+    },
     URL,
     JSON,
     AbortController,
@@ -119,6 +139,8 @@ test('apply announces the page on the document-relative bridge URL', async () =>
   assert.equal(body.hasSidebarRight, true);
   assert.equal(body.mounted, 'session-1');
   assert.equal(body.activeTabId, 'tab1');
+  // The visible carrier is what browser_claim needs: the hidden one must be skipped.
+  assert.equal(JSON.stringify(body.visible), JSON.stringify({ url: 'https://visible.test/page', title: 'Visible page' }));
 });
 
 test('an open-tab command reaches ctx.sidebarRight.openTab once', async () => {

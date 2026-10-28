@@ -133,6 +133,41 @@ test('every tool definition satisfies the runtime schema subset', () => {
   assert.equal(tools.length, 14);
 });
 
+/**
+ * The registry rejects a returned value that has a field the output schema does
+ * not declare (`additionalProperties: false`), so a runtime field added without
+ * its schema entry turns a working tool into "returned invalid output". Two such
+ * gaps shipped once (screenshot's `index`, claim's `replacedExistingPageId`).
+ */
+test('every field the runtime can add is declared in the output schema', () => {
+  const extras = {
+    browser_claim: ['replacedExistingPageId'],
+    browser_list: ['warning'],
+    browser_status: ['bridgeError'],
+  };
+  const problems = [];
+  for (const tool of createTools(stubRuntime)) {
+    const schema = tool.output.schema;
+    const declared = new Set(Object.keys(schema.properties ?? {}));
+    // Every page-scoped tool goes through Runtime.onPage, which adds these.
+    const pageScoped = Object.hasOwn(tool.parameters.properties ?? {}, 'pageId');
+    if (pageScoped) {
+      for (const field of ['pageId', 'index']) {
+        if (!declared.has(field)) problems.push(`${tool.name}: missing output field ${field}`);
+      }
+    }
+    for (const field of extras[tool.name] ?? []) {
+      if (!declared.has(field)) problems.push(`${tool.name}: missing optional output field ${field}`);
+    }
+    if (schema.additionalProperties === false) {
+      for (const field of schema.required ?? []) {
+        if (!declared.has(field)) problems.push(`${tool.name}: required field ${field} is not declared`);
+      }
+    }
+  }
+  assert.deepEqual(problems, []);
+});
+
 test('every renderer returns non-empty text blocks', () => {
   for (const tool of createTools(stubRuntime)) {
     const sample = sampleValueFor(tool.output.schema);
