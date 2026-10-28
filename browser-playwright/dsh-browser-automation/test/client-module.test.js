@@ -117,6 +117,7 @@ function harness(options = {}) {
   const start = (overrides = {}) => {
     const opened = [];
     const calls = [];
+    const registrations = [];
     let expanded = overrides.expanded ?? options.expanded ?? true;
     const toggle = overrides.toggleExpanded ?? options.toggleExpanded;
     const service = {
@@ -134,17 +135,36 @@ function harness(options = {}) {
             calls.push(['toggleExpanded']);
           },
     };
-    const plugin = loaded.factory(() => ({}));
+    const plugin = loaded.factory(requireStub());
     plugin.apply({
       sidebarRight: service,
       layout: { openRightbar: () => calls.push(['openRightbar']) },
+      sidebarRightTabs: {
+        register: (definition) => {
+          registrations.push(['tabType', definition.id, definition.kind]);
+          return () => {};
+        },
+      },
+      slots: {
+        register: (options, component) => {
+          registrations.push(['slot', options.name, options.key, typeof component]);
+          return () => {};
+        },
+      },
+      locale: {
+        register: (ns) => {
+          registrations.push(['locale', ns]);
+          return () => {};
+        },
+        bind: () => (key) => key,
+      },
       effect: (callback) => {
         const cleanup = callback();
         if (typeof cleanup === 'function') disposers.push(cleanup);
         return () => {};
       },
     });
-    return { opened, calls, service, plugin };
+    return { opened, calls, registrations, service, plugin };
   };
 
   const stop = () => {
@@ -154,15 +174,62 @@ function harness(options = {}) {
   return { loaded, requests, longTimers, start, stop };
 }
 
+/**
+ * The page module table supplies React. The panel only needs `createElement` at
+ * registration time (hooks run when the tab renders, which this harness does not
+ * do), so the stub stays tiny on purpose.
+ */
+function requireStub() {
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props, children }),
+    useState: (initial) => [initial, () => {}],
+    useEffect: () => {},
+    useCallback: (fn) => fn,
+    useRef: (initial) => ({ current: initial }),
+  };
+  return (name) => (name === 'react' ? React : {});
+}
+
 const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('the client module loads through the page module loader', () => {
   const { loaded } = harness();
   assert.ok(loaded, 'the module never called window.__ModuleLoader__.load');
   assert.equal(loaded.id, '@local/dsh-browser-automation');
-  const plugin = loaded.factory(() => ({}));
-  assert.equal(JSON.stringify(plugin.inject), JSON.stringify(['sidebarRight', 'layout']));
+  const plugin = loaded.factory(requireStub());
+  assert.equal(
+    JSON.stringify(plugin.inject),
+    JSON.stringify(['sidebarRight', 'layout', 'slots', 'sidebarRightTabs', 'locale']),
+  );
   assert.equal(typeof plugin.apply, 'function');
+});
+
+/**
+ * The panel is a tab type plus a body under one id. Getting either registration
+ * wrong means the user sees a tab with no body (or nothing at all), and neither
+ * shows up as an error anywhere else.
+ */
+test('apply registers the panel tab type, its body and its strings', async () => {
+  const { start, stop } = harness();
+  const { registrations } = start();
+  await settle(40);
+  stop();
+
+  const tabType = registrations.find((entry) => entry[0] === 'tabType');
+  assert.ok(tabType, 'no tab type was registered');
+  assert.equal(tabType[1], '@local/dsh-browser-automation/panel');
+  assert.equal(tabType[2], 'browser-automation');
+
+  const body = registrations.find((entry) => entry[0] === 'slot');
+  assert.ok(body, 'no body was registered');
+  assert.equal(body[1], 'sidebar.right.pane.tab');
+  assert.equal(body[2], '@local/dsh-browser-automation/panel', 'the body must key on the type id');
+  assert.equal(body[3], 'function');
+
+  assert.ok(
+    registrations.some((entry) => entry[0] === 'locale' && entry[1] === 'browser-automation'),
+    'the panel strings were not registered with the locale service',
+  );
 });
 
 test('apply announces the page on the document-relative bridge URL', async () => {
@@ -410,6 +477,9 @@ test('an empty poll answer does not spin the loop', async () => {
   // hello + a handful of polls; without the floor this would be hundreds.
   assert.ok(requests.length <= 8, `the loop spun: ${requests.length} requests in 300ms`);
 });
+
+
+
 
 
 

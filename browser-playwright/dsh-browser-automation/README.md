@@ -26,6 +26,10 @@
    playwright-cli 也没有 `targetId` 参数。`browser_open` 由页面半边调用 `ctx.sidebarRight.openTab` 完成。
 3. **收尾只 `detach`，绝不 `close`。** `browser_close` 只关一个标签页，不碰 DSH 进程。
 
+> **已知待修（已写规格）**：CLI 的"当前页"是 daemon 全局状态，而当前互斥是按 pageId 分的，
+> 所以两个 DSH 会话同时操作**不同**页面时可能互相踩到对方页上。修法与验收见
+> [`docs/concurrency-fix.md`](docs/concurrency-fix.md)（尚未实现）。
+
 ---
 
 ## 2. 安装与前置条件
@@ -64,7 +68,7 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 | `browser_evaluate {pageId, expression}` | 求值，结果是 `JSON.stringify`（表达式必须是单表达式或 IIFE） |
 | `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它） |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
-| `browser_status {action}` | `status` / `attach` / `detach`；连接出问题先看它 |
+| `browser_status {action}` | `status` / `attach` / `detach` / `panel`；连接出问题先看它，`panel` 打开状态面板 |
 
 **副作用（工具描述里已声明）**：每个操作都会 `tab-select`，即改变 playwright-cli 的 current tab，并把它停在目标页上。
 `browser_claim` 会替换页面标记，原来那个 `pageId` 立即失效。
@@ -72,6 +76,21 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 **`browser_claim` 找的是"用户眼前那一页"**，不是 playwright 的 current tab —— 后者是 CLI 自己的记账，
 re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会先问页面半边：
 它报告当前可见 `<webview>` 的 URL（隐藏的载体 box 尺寸为 0，被跳过），再用这个 URL 去 `tab-list` 里匹配。
+
+### 状态面板（`browser_status action=panel`）
+
+给**人**看的一面：只读，除两个全局动作（断开 / 重新连接）外不提供任何操作。
+它在右侧边栏开一个**会话级**标签页（`browser-automation` 类型），显示：
+
+- 连接：CDP 是否附着、桥的 `state` 与客户端数、挂起轮询数、`bridgeError`
+- CLI 解释器：实际用的 node（含 `source`：`dsh-runtime` / `path` / …）、命令、`-s=` 会话名
+- 启动模式：`新开标签页` / `接管可见页` 当前是否可用
+- 本会话的页面：`pageId`、来源（`open` / `claim`）、标题、URL、是否 current
+- 两个按钮：`断开 CLI`（= `detach`，提示里写明会让已有 `pageId` 失效）、`重新连接`
+
+为什么是会话级标签页而不是左栏的全局页面：全局页面会替换主栏的对话，而侧边栏浏览器的挂载点依赖
+"会话在屏"（`mounted = sessions.onScreen`），面板开着时 `browser_open` / `browser_claim` 会直接不可用 ——
+一个报告状态的面板不该把它报告的东西关掉。面板标题在打开时捕获，所以改语言后重开即可。
 
 ### 单步 vs `run_code`
 

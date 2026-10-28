@@ -67,7 +67,7 @@ export function apply(ctx, config) {
         dispose = ctx.webServer.register({
           kind: 'prefix',
           path: ROUTE_REGISTRATION,
-          handler: (request, response) => serve({ request, response, bridge, settings, log }),
+          handler: (request, response) => serve({ request, response, runtime, bridge, settings, log }),
         });
       } catch (error) {
         // A bridge that cannot mount must not cost the CLI tools: every page
@@ -102,19 +102,21 @@ export function apply(ctx, config) {
 /**
  * Serve the Host <-> page bridge.
  *
- * A page announces itself, long-polls for one command, and posts one result. The
- * route carries no page content and no credentials of its own: it refuses
- * non-loopback sockets and requests a browser marks as cross-site, which is the
- * same fence the app's own API applies. Nothing here is reachable off-machine.
+ * A page announces itself, long-polls for one command, and posts one result; the
+ * panel tab reads the same route for a status snapshot. The route carries no page
+ * content and no credentials of its own: it refuses non-loopback sockets and
+ * requests a browser marks as cross-site, which is the same fence the app's own
+ * API applies. Nothing here is reachable off-machine.
  *
  * @param {object} input
  * @param {import('node:http').IncomingMessage} input.request
  * @param {import('node:http').ServerResponse} input.response
+ * @param {import('./src/runtime.js').Runtime} input.runtime
  * @param {Bridge} input.bridge
  * @param {Record<string, unknown>} input.settings
  * @param {(message: string) => void} input.log
  */
-async function serve({ request, response, bridge, settings, log }) {
+async function serve({ request, response, runtime, bridge, settings, log }) {
   response.setHeader('content-type', 'application/json; charset=utf-8');
   response.setHeader('cache-control', 'no-store');
   response.setHeader('access-control-allow-origin', '*');
@@ -180,6 +182,20 @@ async function serve({ request, response, bridge, settings, log }) {
       case 'result': {
         log(`page answered ${String(body.requestId)}: ok=${body.ok}`);
         reply(response, 200, { ok: true, value: bridge.submitResult(body) });
+        return;
+      }
+      case 'status': {
+        // The panel tab reads this. It is the same snapshot browser_status returns,
+        // so the UI never has to re-derive plugin state on its own.
+        const sessionId = String(body.sessionId ?? '');
+        if (!sessionId) {
+          reply(response, 400, { ok: false, error: 'status requires a sessionId' });
+          return;
+        }
+        const requested = String(body.action ?? 'status');
+        const allowed = requested === 'detach' || requested === 'attach' ? requested : 'status';
+        const snapshot = await runtime.status({ sessionId, action: allowed });
+        reply(response, 200, { ok: true, value: snapshot });
         return;
       }
       default:

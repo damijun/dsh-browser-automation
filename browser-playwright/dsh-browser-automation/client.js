@@ -17,6 +17,8 @@ window.__ModuleLoader__.load({
     const BRIDGE_PATH = 'dsh-browser-automation/bridge/';
     const CLIENT_ID_KEY = 'dsh-browser-automation:clientId';
     const POLL_WAIT_MS = 15_000;
+    // The panel is a React component; React comes from the page's module table.
+    const React = require('react');
 
     /** Stable id for this browser tab, so the Host can tell pages apart. */
     function clientId() {
@@ -76,6 +78,239 @@ window.__ModuleLoader__.load({
       } finally {
         clearTimeout(timer);
       }
+    }
+
+    /**
+     * The status panel: a session-scoped sidebar tab that shows what the tools are
+     * doing, for the user rather than for the model.
+     *
+     * `browser_status` already answers every question here for an agent; the panel
+     * exists so a person can see the same facts without asking. It is deliberately
+     * read-only plus two global actions (detach / reconnect) — opening URLs or
+     * closing pages would create a second, unregistered way to start work.
+     *
+     * A tab type is two registrations under one id: the type (kind, chip title) and
+     * the body under the `sidebar.right.pane.tab` slot, whose props include
+     * `sessionId`. The chip title is captured at open time, hence the localized
+     * `title()`.
+     */
+    const PANEL_ID = '@local/dsh-browser-automation/panel';
+    const PANEL_KIND = 'browser-automation';
+    const LOCALE_NS = 'browser-automation';
+
+    const DICT = {
+      en: {
+        'panel.title': 'Browser automation',
+        'panel.refresh': 'Refresh',
+        'panel.detach': 'Detach CLI',
+        'panel.attach': 'Reconnect',
+        'panel.connection': 'Connection',
+        'panel.interpreter': 'CLI interpreter',
+        'panel.modes': 'Start modes',
+        'panel.pages': 'Pages in this session',
+        'panel.empty': 'No controlled pages yet — ask for browser_open or browser_claim.',
+        'panel.loading': 'Working…',
+        'panel.unavailable': 'unavailable',
+        'panel.available': 'available',
+        'panel.open': 'open a new tab',
+        'panel.claim': 'take over the visible page',
+        'panel.detachHint': 'Detach ends the automation session: existing pageIds stop resolving.',
+        'panel.noSession': 'This tab is not bound to a session.',
+        'panel.clients': 'clients',
+        'panel.polls': 'held polls',
+      },
+      zh: {
+        'panel.title': '浏览器自动化',
+        'panel.refresh': '刷新',
+        'panel.detach': '断开 CLI',
+        'panel.attach': '重新连接',
+        'panel.connection': '连接',
+        'panel.interpreter': 'CLI 解释器',
+        'panel.modes': '启动模式',
+        'panel.pages': '本会话的页面',
+        'panel.empty': '还没有受控页面 —— 让模型调用 browser_open 或 browser_claim。',
+        'panel.loading': '处理中…',
+        'panel.unavailable': '不可用',
+        'panel.available': '可用',
+        'panel.open': '新开标签页',
+        'panel.claim': '接管可见页',
+        'panel.detachHint': '断开即结束自动化会话：已有 pageId 会失效。',
+        'panel.noSession': '这个标签页没有绑定到会话。',
+        'panel.clients': '客户端',
+        'panel.polls': '挂起轮询',
+      },
+    };
+
+    const PANEL_CSS = [
+      '.dshba{display:flex;flex-direction:column;gap:10px;padding:12px;height:100%;overflow:auto;',
+      'background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;line-height:1.5}',
+      '.dshba-head{display:flex;align-items:center;gap:8px}',
+      '.dshba-title{font-weight:600}',
+      '.dshba-grow{flex:1}',
+      '.dshba-btn{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);',
+      'color:inherit;border-radius:6px;padding:3px 9px;cursor:pointer;font:inherit}',
+      '.dshba-btn:hover:not(:disabled){border-color:var(--dsw-alias-border-l2)}',
+      '.dshba-btn:disabled{opacity:.5;cursor:default}',
+      '.dshba-card{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;',
+      'background:var(--dsw-alias-bg-layer-1);padding:9px 10px;display:flex;flex-direction:column;gap:4px}',
+      '.dshba-label{color:var(--dsw-alias-label-secondary)}',
+      '.dshba-row{display:flex;align-items:baseline;gap:8px}',
+      '.dshba-ok{color:var(--dsw-alias-state-success-primary)}',
+      '.dshba-bad{color:var(--dsw-alias-state-error-primary)}',
+      '.dshba-warn{color:var(--dsw-alias-state-warn-primary)}',
+      '.dshba-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}',
+      '.dshba-page{border-top:1px solid var(--dsw-alias-border-l1);padding:7px 0;display:flex;flex-direction:column;gap:2px}',
+      '.dshba-page:first-of-type{border-top:none;padding-top:0}',
+      '.dshba-url{color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dshba-tag{border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:0 6px;font-size:11px;',
+      'color:var(--dsw-alias-label-secondary)}',
+      '.dshba-err{border:1px solid var(--dsw-alias-state-error-primary);border-radius:8px;padding:8px;',
+      'color:var(--dsw-alias-state-error-primary);white-space:pre-wrap}',
+      '.dshba-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+    ].join('');
+
+    const baseName = (value) => String(value ?? '').split(/[\\/]/).pop();
+
+    /**
+     * Build the panel component. `t` comes from the effect that owns the locale
+     * registration, so the strings live exactly as long as the registrations do.
+     *
+     * @param {(key: string) => string} t
+     */
+    function makePanel(t) {
+      const h = React.createElement;
+      const dash = (value) => (value === null || value === undefined || value === '' ? '—' : String(value));
+      const dot = (ok, label) => h('span', { className: ok ? 'dshba-ok' : 'dshba-bad' }, label);
+
+      return function BrowserAutomationPanel(props) {
+        const sessionId = props && props.sessionId;
+        const [state, setState] = React.useState({ phase: 'loading', data: null, error: null, busy: null });
+        const alive = React.useRef(true);
+        React.useEffect(
+          () => () => {
+            alive.current = false;
+          },
+          [],
+        );
+
+        const load = React.useCallback(
+          (action) => {
+            if (!sessionId) {
+              setState({ phase: 'ready', data: null, error: null, busy: null });
+              return;
+            }
+            setState((previous) => ({ ...previous, phase: 'loading', busy: action ?? 'status' }));
+            call('status', { sessionId, action: action ?? 'status' }, 30_000)
+              .then((data) => {
+                if (alive.current) setState({ phase: 'ready', data, error: null, busy: null });
+              })
+              .catch((error) => {
+                if (alive.current) {
+                  setState((previous) => ({ ...previous, phase: 'ready', error: error.message, busy: null }));
+                }
+              });
+          },
+          [sessionId],
+        );
+
+        React.useEffect(() => {
+          load();
+        }, [load]);
+
+        const data = state.data;
+        const bridge = (data && data.bridge) || {};
+        const resolved = data && data.cli ? data.cli.resolved : null;
+        const modes = (data && data.modes) || { open: false, claim: false };
+        const pages = ((data && data.pages) || []).filter((page) => page && page.pageId);
+        const busy = Boolean(state.busy);
+
+        return h('div', { className: 'dshba' }, [
+          h('style', { key: 'css' }, PANEL_CSS),
+          h('div', { key: 'head', className: 'dshba-head' }, [
+            h('span', { key: 'title', className: 'dshba-title' }, t('panel.title')),
+            state.phase === 'loading' ? h('span', { key: 'busy', className: 'dshba-label' }, t('panel.loading')) : null,
+            h('span', { key: 'grow', className: 'dshba-grow' }),
+            h(
+              'button',
+              { key: 'refresh', className: 'dshba-btn', disabled: busy, onClick: () => load() },
+              t('panel.refresh'),
+            ),
+          ]),
+
+          !sessionId ? h('div', { key: 'nosession', className: 'dshba-err' }, t('panel.noSession')) : null,
+          state.error ? h('div', { key: 'error', className: 'dshba-err' }, state.error) : null,
+
+          h('div', { key: 'conn', className: 'dshba-card' }, [
+            h('div', { key: 'label', className: 'dshba-label' }, t('panel.connection')),
+            h('div', { key: 'cdp', className: 'dshba-row' }, [
+              h('span', { key: 'k' }, 'CDP'),
+              dot(Boolean(data && data.attached), data && data.attached ? 'connected' : 'disconnected'),
+              h('span', { key: 'url', className: 'dshba-mono dshba-label' }, dash(data && data.cdpUrl)),
+            ]),
+            h('div', { key: 'bridge', className: 'dshba-row' }, [
+              h('span', { key: 'k' }, 'Bridge'),
+              dot(bridge.state === 'live', dash(bridge.state)),
+              h('span', { key: 'c', className: 'dshba-tag' }, `${(bridge.clients || []).length} ${t('panel.clients')}`),
+              h('span', { key: 'p', className: 'dshba-tag' }, `${bridge.heldPolls ?? 0} ${t('panel.polls')}`),
+            ]),
+            data && data.bridgeError
+              ? h('div', { key: 'be', className: 'dshba-warn dshba-mono' }, String(data.bridgeError))
+              : null,
+          ]),
+
+          h('div', { key: 'cli', className: 'dshba-card' }, [
+            h('div', { key: 'label', className: 'dshba-label' }, t('panel.interpreter')),
+            h('div', { key: 'file', className: 'dshba-mono' }, resolved ? baseName(resolved.file) : '—'),
+            h('div', { key: 'meta', className: 'dshba-row' }, [
+              resolved && resolved.source ? h('span', { key: 's', className: 'dshba-tag' }, resolved.source) : null,
+              h('span', { key: 'cmd', className: 'dshba-label dshba-mono' }, dash(data && data.cli && data.cli.command)),
+              h('span', { key: 'sess', className: 'dshba-label dshba-mono' }, data && data.cli ? `-s=${data.cli.session}` : ''),
+            ]),
+          ]),
+
+          h('div', { key: 'modes', className: 'dshba-card' }, [
+            h('div', { key: 'label', className: 'dshba-label' }, t('panel.modes')),
+            h('div', { key: 'open', className: 'dshba-row' }, [
+              t('panel.open'),
+              dot(modes.open, modes.open ? t('panel.available') : t('panel.unavailable')),
+            ]),
+            h('div', { key: 'claim', className: 'dshba-row' }, [
+              t('panel.claim'),
+              dot(modes.claim, modes.claim ? t('panel.available') : t('panel.unavailable')),
+            ]),
+          ]),
+
+          h('div', { key: 'pages', className: 'dshba-card' }, [
+            h('div', { key: 'label', className: 'dshba-label' }, `${t('panel.pages')} (${pages.length})`),
+            pages.length === 0 ? h('div', { key: 'empty', className: 'dshba-label' }, t('panel.empty')) : null,
+            ...pages.map((page) =>
+              h('div', { key: page.pageId, className: 'dshba-page' }, [
+                h('div', { key: 'row', className: 'dshba-row' }, [
+                  h('span', { key: 'pid', className: 'dshba-mono' }, page.pageId),
+                  page.current ? h('span', { key: 'cur', className: 'dshba-tag' }, 'current') : null,
+                  page.source ? h('span', { key: 'src', className: 'dshba-tag' }, page.source) : null,
+                ]),
+                h('div', { key: 'title', className: 'dshba-url' }, dash(page.title)),
+                h('div', { key: 'url', className: 'dshba-url dshba-mono' }, dash(page.url)),
+              ]),
+            ),
+          ]),
+
+          h('div', { key: 'foot', className: 'dshba-foot' }, [
+            h(
+              'button',
+              { key: 'detach', className: 'dshba-btn', disabled: busy, onClick: () => load('detach') },
+              t('panel.detach'),
+            ),
+            h(
+              'button',
+              { key: 'attach', className: 'dshba-btn', disabled: busy, onClick: () => load('attach') },
+              t('panel.attach'),
+            ),
+            h('span', { key: 'hint', className: 'dshba-label' }, t('panel.detachHint')),
+          ]),
+        ]);
+      };
     }
 
     /**
@@ -380,6 +615,15 @@ window.__ModuleLoader__.load({
           await call('result', { requestId: command.requestId, ok: true, value });
           return;
         }
+        if (command.kind === 'open-panel') {
+          // Opening the panel is the same navigation every other entry point uses:
+          // a page type is opened by kind, and DSH dedupes it within the pane.
+          const service = sidebar();
+          if (!service) throw new Error('the sidebar-right client service is not available in this page');
+          service.openTab(PANEL_KIND);
+          await call('result', { requestId: command.requestId, ok: true, value: { opened: true, kind: PANEL_KIND } });
+          return;
+        }
         await call('result', {
           requestId: command.requestId,
           ok: false,
@@ -417,7 +661,7 @@ window.__ModuleLoader__.load({
             if (failureStreak === 1 || failureStreak % 20 === 0) {
               console.warn(
                 `[dsh-browser-automation] Host bridge unavailable (${error && error.message}); ` +
-                  'browser_open will fall back to navigating an existing tab',
+                  'browser_open and browser_claim will report the bridge as the cause until it returns',
               );
             }
             if (stopped) return;
@@ -425,6 +669,62 @@ window.__ModuleLoader__.load({
           }
         }
       }
+
+      /**
+       * The panel tab type, its body, and its strings, all as one effect.
+       *
+       * A tab type is two registrations under one id: `sidebarRightTabs.register`
+       * names the kind and the chip title (captured when the tab opens), and the
+       * body registers into `sidebar.right.pane.tab` under that id and receives
+       * `sessionId` as a prop. Both are owned by this effect, so they disappear with
+       * the plugin instead of leaving a tab with no body.
+       */
+      ctx.effect(
+        () => {
+          const disposers = [];
+          let t = (key) => DICT.en[key] ?? key;
+          try {
+            const disposeLocale = ctx.locale.register(LOCALE_NS, DICT);
+            if (typeof disposeLocale === 'function') disposers.push(disposeLocale);
+            const bound = ctx.locale.bind(LOCALE_NS);
+            t = (key) => {
+              try {
+                const value = bound(key);
+                if (typeof value === 'string' && value !== key) return value;
+              } catch (error) {
+                /* fall through to the built-in English copy */
+              }
+              return DICT.en[key] ?? key;
+            };
+          } catch (error) {
+            console.warn(`[dsh-browser-automation] locale registration skipped: ${error.message}`);
+          }
+          try {
+            disposers.push(
+              ctx.sidebarRightTabs.register({
+                id: PANEL_ID,
+                kind: PANEL_KIND,
+                title: () => t('panel.title'),
+              }),
+            );
+            disposers.push(
+              ctx.slots.register({ name: 'sidebar.right.pane.tab', key: PANEL_ID }, makePanel(t)),
+            );
+          } catch (error) {
+            console.warn(`[dsh-browser-automation] status panel could not register: ${error.message}`);
+          }
+          return () => {
+            for (const dispose of disposers) {
+              try {
+                dispose();
+              } catch (error) {
+                /* already gone */
+              }
+            }
+          };
+        },
+        'dsh-browser-automation: status panel',
+      );
 
       ctx.effect(
         () => {
@@ -438,10 +738,10 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      // `layout` is only needed to open a collapsed column for a screenshot, but
-      // it is a hard inject because a missing service would silently break that
-      // fallback path instead of failing loudly.
-      inject: ['sidebarRight', 'layout'],
+      // `layout` opens a collapsed column for a screenshot; `slots`/`sidebarRightTabs`
+      // host the status panel; `locale` carries its copy. All are hard injects so a
+      // profile without them fails loudly instead of half-working.
+      inject: ['sidebarRight', 'layout', 'slots', 'sidebarRightTabs', 'locale'],
       apply,
     };
   },
