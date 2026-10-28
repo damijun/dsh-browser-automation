@@ -59,18 +59,30 @@ export class Bridge {
   }
 
   /**
-   * Whether a page is actually listening.
+   * Whether a page is actually listening, and whether it ever was.
    *
    * A `hello` alone is not enough: anything that can reach the loopback route
    * (a probe, a stale tab) can announce itself. Only a page that has held a poll
-   * is able to receive a command.
+   * is able to receive a command. The three-way answer lets the caller tell "the
+   * window never connected" (a reload fixes it) from "the page just went quiet"
+   * (a retry may be enough).
+   *
+   * @returns {'live' | 'stale' | 'never'}
    */
-  hasClient() {
+  clientState() {
     const cutoff = Date.now() - 60_000;
+    let polledButStale = false;
     for (const record of this.clients.values()) {
-      if (record.polled === true && record.seenAt >= cutoff) return true;
+      if (record.polled !== true) continue;
+      if (record.seenAt >= cutoff) return 'live';
+      polledButStale = true;
     }
-    return false;
+    return polledButStale ? 'stale' : 'never';
+  }
+
+  /** Whether a page can receive a command right now. */
+  hasClient() {
+    return this.clientState() === 'live';
   }
 
   /**
@@ -224,9 +236,11 @@ export class Bridge {
   /** Diagnostics for `browser_status`. */
   snapshot() {
     return {
+      state: this.clientState(),
       clients: [...this.clients.values()].map((record) => ({
         clientId: record.clientId.slice(0, 8),
         seenAgoMs: Date.now() - record.seenAt,
+        polled: record.polled === true,
         capabilities: record.capabilities,
       })),
       pendingRequests: this.pending.size,

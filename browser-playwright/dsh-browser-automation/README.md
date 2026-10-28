@@ -46,12 +46,13 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 
 ## 3. 工具
 
-除 `open` / `claim` / `list` / `status` 外，所有工具的第一个参数都是 `pageId`。
+**启动方式只有两种**：`browser_open`（自己开新页）或 `browser_claim`（接管用户眼前那一页）。
+其余工具都是在已登记的 `pageId` 上操作。除 `open` / `claim` / `list` / `status` 外，所有工具的第一个参数都是 `pageId`。
 
 | 工具 | 作用 |
 |---|---|
-| `browser_open {url}` | 通过 DSH UI 新建侧边栏标签页 → 注入标记 → 返回 `pageId` |
-| `browser_claim {note?}` | 接管用户当前所在标签页（playwright-cli 的 current tab），返回注入前的标题 |
+| `browser_open {url}` | 通过 DSH UI 新建侧边栏标签页 → 注入标记 → 返回 `pageId`。桥不可用即报错，**不会**复用现有标签页 |
+| `browser_claim {note?}` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回注入前的标题；替换旧标记，换新 `pageId` |
 | `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页），带实时索引 |
 | `browser_close {pageId}` | 关掉这一个标签页并注销登记 |
 | `browser_snapshot {pageId, depth?}` | 可访问性快照（含 `[ref=…]`），内容原样返回，不做二次压缩 |
@@ -147,11 +148,28 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
   命令投给它是白等 —— 所以取 waiter 用 **LIFO（最新优先）**，并且投递后 4s 内没有 `result` 就**重新入队**给下一个 poll。
 - **空轮询热循环**：正常时 poll 被挂起 15s；若中间层不挂起而立刻返回空，客户端会空转 —— 加 120ms 下限。
 
-### 降级路径
+### 开页只有一条路径
 
-页面桥不可用（页面没连上、插件刚装还没刷新）时，`browser_open` **不硬失败**：
-它会复用一个已存在的 http(s) 标签页并 `goto`，返回 `how: "reused-tab"` 与说明。
-没有可复用的页时才报错，并告诉用户"先手动打开一次 Browser 标签页，或刷新 DSH 窗口"。
+页面桥不可用（页面没连上、插件刚装还没刷新）时，`browser_open` **直接报错**，不会退化成"复用一个现有标签页"。
+
+原因不是实现偷懒，而是正确性：
+
+- 创建侧边栏标签页**只能**在页面里调 `ctx.sidebarRight.openTab`，Electron 的 CDP 不支持 `Target.createTarget`；
+- 拿一个现有标签页去 `goto`，等于**猜测用户意图**，而且会覆盖那一页原来的内容 —— 用户可能正在里面填表；
+- 桥不通是"插件/窗口状态"问题，修复动作很明确（刷新窗口），静默绕过只会让故障藏起来。
+
+所以这个插件的**启动方式只有两种**，没有第三种：
+
+| 模式 | 工具 | 需要什么 | 失败时 |
+|---|---|---|---|
+| 自己开新页 | `browser_open` | 页面桥（+ CDP） | 报错并给修复动作，**不动任何现有标签页** |
+| 接管用户的页 | `browser_claim` | 页面桥（+ CDP）+ **侧边栏已展开且有可见的浏览器页** | 报错说明是"侧边栏没开"还是"页面还在加载" |
+
+两条都依赖页面桥，但**已经登记的 `pageId` 不受影响**：`snapshot/click/fill/goto/evaluate/run_code/console/screenshot/close/list` 全部只走 CDP，
+桥断了照样能用。`browser_status` 的 `modes: {open, claim}` 直接告诉你当前哪些模式可用。
+
+> 侧边栏收起时页面不会被销毁（DSH 的 `keepMounted`），但它的 carrier 没有盒子尺寸，
+> 页面半边因此报"看不见哪一页" —— 这就是 claim 要求"先展开侧边栏"的物理原因。
 
 ---
 
@@ -181,9 +199,9 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
   同一个窗口里的多个 DSH 会话没问题（靠标记区分，已实测）；两个 DSH 窗口各自开页时，桥只能打开请求时在屏的那个会话的标签页。
 - **`browser_screenshot` 只返回路径**，不内联图片字节（工具返回值必须是 lossless JSON；内联图片需要 attachments 服务）。
 - **截图只能拍侧边栏当前可见的标签页**。Chromium 只捕获它在合成中的 surface，同 pane 里被别的标签页挡住的
-  页没有 surface，`page.screenshot()` 会一直等到 5s 超时。插件会先让页面 `focus(tabId)` 再等一下，
-  但这个手段并不总能让隐藏页获得 surface —— 所以报错信息直接告诉用户"把该标签页切到前台"。
-  只是读内容时用 `browser_snapshot`，它不依赖合成，永远可用。
+  页没有 surface，`page.screenshot()` 会一直等到 5s 超时。插件若知道该页的侧边栏 `tabId` 会先请页面
+  `focus(tabId)` 再等一下，但这只是尽力而为（`active()` 有时拿不到 id），实测隐藏页仍可能失败 ——
+  所以报错信息直接告诉用户"把该标签页切到前台"。只读内容时用 `browser_snapshot`，它不依赖合成，永远可用。
 - **`detach` 结束自动化会话**：DSH 与它的标签页毫发无损，但之后再操作会以全新的 attach 视图开始 ——
   已有的 `pageId` 不再解析（实测：detach 后重新 attach，`tab-list` 里看不到原来的 webview 目标），
   需要重新 `browser_open` / `browser_claim`。
@@ -204,23 +222,27 @@ cd dsh-browser-automation
 node --test
 ```
 
-54 个用例，覆盖：
+65 个用例，覆盖：
 
 - `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、零命中/多命中、索引漂移）；
 - 标记脚本（追加、幂等、剥旧标记、页面改标题后补回、更新 `<title>` 的场景）——用 `node:vm` + 假 DOM 真跑；
+- **两种启动模式的约束**：桥不在/从未连上/掉线三种状态都必须报错且**不碰 CLI**（断言没有任何
+  `tab-select`/`goto`，也没登记 pageId）；claim 在"看不见页面"、"页面还没进 tab-list"、"可见 URL 带尾斜杠或 hash"
+  各种情况下的行为；claim 换标记后旧 pageId 必须注销；
 - **client 半边的 harness**：把真实的 `client.js` 按页面的方式载入，用假 `__ModuleLoader__` + 假
   `ctx.sidebarRight` 跑 `apply()`，断言 `hello` 用的是文档相对 URL、`open-tab` 只调用一次
   `openTab`、`focus-tab` 只调 `focus`、失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
 - 工具定义（自实现一遍 `assertSupportedJsonSchema` 子集，避免"装上才发现 schema 非法"）、渲染器、命名、无 `index`/`tab-new`/`targetId`；
+  以及"运行时加的字段必须在 output schema 里声明"（这条抓到过两次真 bug）；
 - CliBridge（shim → JS 入口解析、**Electron 里必须换用 PATH 的 node**、argv 不被引号破坏、非零退出、超时、取消、失败信息去掉 Node 栈）；
-- 桥协议（长轮询、LIFO 投递、4s 未应答重投、结果落地、超时、页面失败、卸载）；
-- `SessionManager` 互斥、`discover` 的会话归属、`normalizeUrl` 规则、`sanitize` 的 JSON 安全。
+- 桥协议（长轮询、LIFO 投递、4s 未应答重投、结果落地、超时、页面失败、卸载、`clientState` 三态）；
+- `SessionManager` 互斥、`discover` 的会话归属、`normalizeUrl` 规则、`samePage`、`sanitize` 的 JSON 安全。
 
 ### 验收记录（2026-10-28，真机）
 
 | 用例 | 结果 |
 |---|---|
-| T1 `browser_open` 开真标签页、title 带 `[dshpg-…]` | ✅ `how: new-tab` |
+| T1 `browser_open` 开真标签页、title 带 `[dshpg-…]` | ✅ 桥不可用时**报错且不动任何标签页**（已单测断言零 CLI 调用）；桥正常时新建标签页 |
 | T2 双会话隔离 | ✅ 子会话拿到 `dshpg-82ae30-…`；我这边 `scope=session` 看不到它，`scope=all` 能看到 |
 | T3 只传 pageId、内部解析索引 | ✅ 全程未手输索引 |
 | T4 `snapshot → click → fill/press → goto` | ✅ 点击跨域跳转到 iana.org 后标记仍在；`run_code`+`setContent` 后标记被补回 |
@@ -228,10 +250,10 @@ node --test
 | T5 索引漂移 | ✅ 关掉 index 1 后，原 index 2 的 pageId 仍能解析 |
 | T6 不依赖 `tab-new` / `targetId` | ✅ 单测断言源码中不出现 |
 | T7 `detach` 不杀 DSH | ✅ 应用存活；重新 attach 后需重新 open/claim（见 §7） |
-| T8 `browser_claim` | ✅ 接管"用户眼前那一页"：把 playwright 的当前页故意切回应用页后，仍能凭页面报告的可视 `<webview>` URL 找到它，返回原标题并换新 pageId（旧 pageId 立即失效） |
+| T8 `browser_claim` | ✅ 接管"用户眼前那一页"：忽略 playwright 的 current tab，凭页面报告的可视 `<webview>` URL 找到它，返回原标题并换新 pageId；旧 pageId 立即失效，**其他标签页分毫未动** |
 | T9 关闭后 `PAGE_NOT_FOUND` | ✅ 错误信息带当前 tab 列表摘要与下一步建议 |
-| T10 解析单测 | ✅ 15 个用例含 `[]()` 标题、`(current)`、多命中 |
-| 截图前焦点、`browser_console`、`browser_list scope=all` 的未标记行 | ✅ 均按文档行为 |
+| T10 解析单测 | ✅ 含 `[]()` 标题、`(current)`、多命中 |
+| `browser_status.modes` | ✅ 实测 `{open:true, claim:false}`（无可见浏览器页时 claim 明确不可用），claim 随之给出"先展开侧边栏"的报错 |
 
 ---
 
@@ -240,9 +262,14 @@ node --test
 | 现象 | 先做什么 |
 |---|---|
 | `Could not attach playwright-cli to DSH at http://127.0.0.1:9222` | DSH 没带 `--remote-debugging-port=9222` 启动；改快捷方式并重启 |
-| `browser_status` 里 `bridge.clients` 为空 | 页面还没加载 client.js：刷新 DSH 窗口（或重启） |
+| `browser_open` / `browser_claim` 报 `needs the DSH page` | 页面半边没连上（`bridge.state` 为 `never`/`stale`）：刷新 DSH 窗口，1 秒内会自己重连；仍不行看 `bridgeError` |
+| `browser_claim` 报 `Could not see a browser page` | 侧边栏没展开，或没选中浏览器标签页；展开并选中后重试 |
+| `browser_claim` 报 `not in playwright-cli's tab list yet` | 页面还在加载：等一秒重试，或 `browser_list` 看 CLI 能看到什么 |
+| `browser_status` 里 `bridge.clients` 为空 | 同上：页面还没加载 client.js，刷新窗口 |
 | `bridgeError: cannot get property "webServer" without inject` | 插件 generation 过期：重启 DSH 让新代码生效 |
-| `browser_screenshot` 报截图超时 | 那个标签页不在前台、没有渲染面；先切到前台 |
+| `browser_screenshot` 报截图超时 | 那个标签页不在前台、没有渲染面；先切到前台（或改用 `browser_snapshot`） |
+| `PAGE_NOT_FOUND` | 页面被用户关掉了、标记还没补回、或 CLI 被 detach 过；`browser_list` 看现状，再 `browser_open` / `browser_claim` |
+| `AMBIGUOUS_PAGE` | 同一标题出现两个相同 `pageId`（几乎不可能是 bug 之外的原因）；`browser_list scope=all` 看全量 |
 | CLI 超时 | `playwright-cli list`（看守护进程），必要时 `playwright-cli -s=dsh detach` |
 | 启动即崩溃：`web boot: 1 entry did not activate / … import failed` | client bundle 的 revision 与内容不同步（改完 client.js 立刻刷新页面时出现）。**先把本行 disable**（`set_plugin enabled=false`）再启动，进应用后 enable，最后刷新一次页面 |
 | `detach` 之后第一次操作很慢 | 正常：下一次操作会重新 `attach`（含一次重试） |
@@ -254,7 +281,4 @@ DSH 在 **boot 阶段**把"任一行激活失败"当致命错误，所以一个�
 
 改完 `client.js` 后不要立刻刷新页面，等 `plugin_manager` 那步完成。正确顺序：
 改文件 → disable → enable（宿主侧生效）→ 刷新页面（客户端侧生效）。
-| `PAGE_NOT_FOUND` | 页面被用户关掉了，或标记还没补回；`browser_list` 看现状，再 `browser_open` / `browser_claim` |
-| `AMBIGUOUS_PAGE` | 同一标题出现两个相同 `pageId`（几乎不可能是 bug 之外的原因）；`browser_list scope=all` 看全量 |
-| `browser_open` 返回 `how: "reused-tab"` | 页面桥没连上，走的是降级路径；刷新窗口后重试 |
 | CLI 超时 | `playwright-cli list`（看守护进程），必要时 `playwright-cli -s=dsh detach` |

@@ -22,14 +22,10 @@ export class SessionManager {
    * @param {{ pageId: string, sessionId: string, url?: string, title?: string, source?: string }} record
    */
   register(record) {
-    const entry = {
-      pageId: record.pageId,
-      sessionId: record.sessionId,
-      url: record.url,
-      title: record.title,
-      source: record.source ?? 'open',
-      createdAt: Date.now(),
-    };
+    // Spread the caller's record instead of copying a fixed field list: a field
+    // the registry silently drops (the sidebar `tabId`, which a later screenshot
+    // needs for focus) is a bug that hides until the feature is used.
+    const entry = { source: 'open', ...record, createdAt: Date.now() };
     this.pages.set(entry.pageId, entry);
     return entry;
   }
@@ -96,6 +92,7 @@ export class SessionManager {
  * @property {string | undefined} url
  * @property {string | undefined} title
  * @property {string} source
+ * @property {string | null | undefined} tabId sidebar tab id, when known (screenshot focus)
  * @property {number} createdAt
  */
 

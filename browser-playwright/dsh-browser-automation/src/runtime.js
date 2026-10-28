@@ -90,10 +90,20 @@ export class Runtime {
   }
 
   /**
+   * Open a sidebar tab through the DSH UI, then take control of it.
+   *
+   * This is one of exactly two ways to start work with a page (the other is
+   * browser_claim). There is no third, implicit path: if the page half is not
+   * connected, opening fails loudly instead of reusing some tab the user might
+   * be busy with, because nothing in this tool can prove which tab the user meant.
+   *
    * @param {{ sessionId: string, url: string, waitMs?: number, signal?: AbortSignal }} request
    */
   async openPage(request) {
     const url = normalizeUrl(request.url);
+    // Fail before touching the CLI or the sidebar: an unreachable page half is a
+    // plugin/window problem, and no amount of CLI work can open a tab without it.
+    requireBridge(this.bridge, 'browser_open');
     const driver = this.ensureDriver();
     const listing = await this.attach(request.signal);
     const before = new Set(listing.tabs.map((tab) => tab.text));
@@ -118,58 +128,35 @@ export class Runtime {
         title: marked.title,
         source: 'open',
         // The sidebar tab id lets a later screenshot bring the tab to the front.
-        tabId: opened.detail?.tabId ?? null,
+        tabId: opened?.tabId ?? null,
       });
       return {
         pageId,
         url: marked.url || found.url,
         title: marked.title,
         index: found.index,
-        how: opened.how,
-        note: opened.note,
       };
     });
   }
 
   /**
-   * Ask the DSH page to open a tab; fall back to navigating an existing tab when
-   * no page is connected to the bridge.
+   * Ask the DSH page to create a sidebar tab. There is no fallback by design: the
+   * only supported way to create a sidebar tab is `ctx.sidebarRight.openTab` inside
+   * the page, and Electron's CDP cannot create targets. Reusing an existing tab
+   * instead would be a guess about user intent, so it fails with an actionable error.
    */
   async requestSidebarOpen(url) {
-    if (!this.bridge) {
-      return this.degradedOpen(url, 'The page bridge is not mounted.');
-    }
     try {
       const result = await this.bridge.request('open-tab', { url });
       this.log(`sidebar opened a tab for ${url}: ${JSON.stringify(result)}`);
-      return { how: 'new-tab', detail: result };
+      return result;
     } catch (error) {
-      return this.degradedOpen(url, error.message);
-    }
-  }
-
-  /**
-   * Documented degradation (§5.1 of the design brief): reuse a tab that already
-   * shows something and navigate it. It replaces that page's content, so the
-   * caller reports which path was taken.
-   */
-  async degradedOpen(url, reason) {
-    const driver = this.ensureDriver();
-    const listing = await driver.listTabs();
-    const candidates = listing.tabs.filter((tab) => /^https?:/i.test(tab.url));
-    if (candidates.length === 0) {
       throw new Error(
-        `No DSH page answered the request to open a sidebar tab (${reason}), and there is no existing ` +
-          'http(s) tab to reuse. Open the Browser tab in DSH once, or reload the DSH window so the plugin can reconnect.',
+        `The DSH page did not create a sidebar tab for ${url}: ${error.message}\n` +
+          'This tool opens tabs only through the DSH page; it will not take over an arbitrary existing tab. ' +
+          'Check the DSH sidebar and the bridge state (browser_status), then retry.',
       );
     }
-    const target = candidates[0];
-    await this.cli.run(['--raw', 'tab-select', String(target.index)]);
-    await this.cli.run(['--raw', 'goto', url], { timeoutMs: 60_000 });
-    return {
-      how: 'reused-tab',
-      note: `Opened by navigating the existing tab at index ${target.index} instead of creating one (${reason})`,
-    };
   }
 
   /**
@@ -222,28 +209,21 @@ export class Runtime {
   }
 
   /**
-   * Take over the page the user is looking at.
+   * Take over the page the user is looking at — the second of the two start modes.
    *
-   * Playwright's current tab is only a hint: it resets to the application page on
-   * every re-attach and never follows a sidebar tab switch, so the authoritative
-   * answer to "which page is the user on" comes from the page half, which reports
-   * the visible carrier's URL. The CLI current tab is still preferred when it *is*
-   * a web page, because it is the tab the last operation left on screen.
+   * "Looking at" is decided by exactly one source: the page half reports the URL of
+   * the sidebar's visible browser carrier. Playwright's own current tab is not used
+   * as a fallback on purpose — it resets to the application page on every re-attach,
+   * never follows a sidebar tab switch, and picking it would mean taking over a page
+   * nobody asked for. If the page half cannot answer, claim fails and says why.
    *
    * @param {{ sessionId: string, note?: string, signal?: AbortSignal }} request
    */
   async claimPage(request) {
     const driver = this.ensureDriver();
+    requireBridge(this.bridge, 'browser_claim');
     const listing = await this.attach(request.signal);
-    const current = listing.tabs.find((tab) => tab.current);
-    const target = /^https?:/i.test(current?.url ?? '') ? current : await this.visibleTab(listing.tabs);
-    if (!target) {
-      throw new Error(
-        'Could not find the page you have open. Either the sidebar is not showing a web page, or the DSH page ' +
-          'has not reported it yet. Open the Browser tab in DSH, or use browser_open to create one.' +
-          (current ? ` playwright-cli's current tab is "${current.title}" (${current.url}).` : ''),
-      );
-    }
+    const target = await this.requireVisibleTab(listing.tabs);
     const previousIds = extractPageIds(target.title);
     const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
     const originalTitle = target.title.replace(/\s*\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/g, '').trim();
@@ -258,16 +238,6 @@ export class Runtime {
       source: 'claim',
       tabId: target.tabId ?? null,
     });
-    // When the page half supplied the tab id it also became the screenshot focus
-    // target; otherwise ask once, now that the page has something to report.
-    if (!target.tabId && this.bridge) {
-      this.bridge
-        .request('ping', {}, { timeoutMs: 4_000 })
-        .then((caps) => {
-          if (caps?.activeTabId) this.manager.update(pageId, { tabId: caps.activeTabId });
-        })
-        .catch(() => {});
-    }
     return {
       pageId,
       title: originalTitle,
@@ -279,21 +249,42 @@ export class Runtime {
   }
 
   /**
-   * The tab the user is actually looking at, as reported by the page half.
+   * The tab the user is looking at, or a failure that names the fix.
+   *
+   * A collapsed sidebar keeps the page alive but gives its carrier no box, and the
+   * page half reports the visible carrier only — so "open the sidebar" is a real
+   * requirement, not a workaround.
    *
    * @param {import('./tab-list.js').TabEntry[]} tabs
-   * @returns {Promise<(import('./tab-list.js').TabEntry & { tabId: string | null }) | undefined>}
+   * @returns {Promise<import('./tab-list.js').TabEntry & { tabId: string | null }>}
    */
-  async visibleTab(tabs) {
-    if (!this.bridge?.hasClient()) return undefined;
-    const caps = await this.bridge.request('ping', {}, { timeoutMs: 5_000 }).catch(() => undefined);
-    const url = caps?.visible?.url;
-    if (typeof url !== 'string' || !/^https?:/i.test(url)) return undefined;
+  async requireVisibleTab(tabs) {
+    let caps;
+    try {
+      caps = await this.bridge.request('ping', {}, { timeoutMs: 5_000 });
+    } catch (error) {
+      throw new Error(
+        `browser_claim has to ask the DSH page which page you have open, and that request failed: ${error.message}\n` +
+          'Reload the DSH window and retry, or use browser_open once the page half is back.',
+      );
+    }
+    const visibleUrl = caps?.visible?.url;
+    if (typeof visibleUrl !== 'string' || !/^https?:/i.test(visibleUrl)) {
+      throw new Error(
+        'Could not see a browser page in the DSH sidebar. The sidebar must be open with a browser tab ' +
+          'selected: a collapsed sidebar keeps the page alive but leaves it no rendering surface, so the plugin ' +
+          'cannot tell which page you are on. Open the sidebar, select the browser tab, then retry — ' +
+          'or use browser_open to create a new tab.',
+      );
+    }
     const candidates = tabs.filter((tab) => /^https?:/i.test(tab.url));
-    const match = candidates.find((tab) => tab.url === url) ?? candidates.find((tab) => samePage(tab.url, url));
+    const match = candidates.find((tab) => tab.url === visibleUrl) ?? candidates.find((tab) => samePage(tab.url, visibleUrl));
     if (!match) {
-      this.log(`the page shows ${url}, but no tab in the CLI list matches it`);
-      return undefined;
+      throw new Error(
+        `The page you have open (${visibleUrl}) is not in playwright-cli's tab list yet ` +
+          `(${tabs.length} tab(s) visible, ${candidates.length} of them web pages). It may still be loading; ` +
+          'retry in a moment, or run browser_list to see what the CLI can reach.',
+      );
     }
     return { ...match, tabId: caps?.activeTabId ?? null };
   }
@@ -521,6 +512,8 @@ export class Runtime {
       currentIndex: -1,
       tabs: [],
       pages: [],
+      // The two start modes, so the model never has to guess what is possible now.
+      modes: { open: false, claim: false },
     };
     if (request.action === 'detach') {
       try {
@@ -557,6 +550,14 @@ export class Runtime {
     } catch (error) {
       base.attached = false;
       base.note = error.message;
+    }
+    // `open` needs a listening page; `claim` additionally needs that page to be
+    // showing a browser tab. Asking is a 5s round trip, so only do it when the
+    // bridge is live at all.
+    if (this.bridge?.clientState() === 'live') {
+      base.modes.open = true;
+      const caps = await this.bridge.request('ping', {}, { timeoutMs: 5_000 }).catch(() => undefined);
+      base.modes.claim = Boolean(caps?.visible?.url);
     }
     return base;
   }
@@ -630,6 +631,35 @@ function requirePageId(pageId) {
     );
   }
   return value;
+}
+
+/**
+ * Refuse to run a start mode without a listening page.
+ *
+ * Both start modes need the page half, and neither has a fallback: creating a tab
+ * is only possible through `ctx.sidebarRight.openTab`, and "which page is the user
+ * looking at" is only knowable from the page's own carrier. Guessing would mean
+ * hijacking a page nobody asked for, so this fails with the fix instead.
+ *
+ * @param {import('./bridge.js').Bridge | undefined} bridge
+ * @param {'browser_open' | 'browser_claim'} tool
+ */
+export function requireBridge(bridge, tool) {
+  const state = bridge?.clientState?.() ?? 'off';
+  if (state === 'live') return;
+  const reason =
+    state === 'off'
+      ? 'the plugin has no page bridge mounted'
+      : state === 'never'
+        ? 'no DSH page has connected to the bridge since the plugin loaded'
+        : 'the DSH page that was connected has gone quiet';
+  throw new Error(
+    `${tool} needs the DSH page and ${reason}. This is a plugin/window state, not a page error: ` +
+      'without the page half there is no way to create a sidebar tab or to tell which page you are looking at.\n' +
+      '1. Reload the DSH window, then retry — the page reconnects on its own within a second.\n' +
+      '2. If it persists, run browser_status: bridge.state, bridge.clients and bridgeError say why.\n' +
+      'Pages you already control keep working; browser_open and browser_claim do not.',
+  );
 }
 
 export { sessionTag, resolveIndex };

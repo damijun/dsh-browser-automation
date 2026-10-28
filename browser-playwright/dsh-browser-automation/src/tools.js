@@ -54,9 +54,11 @@ export function createTools(runtime) {
       name: 'browser_open',
       description:
         'Open an HTTP(S) URL in a new DSH right-sidebar browser tab and take control of it. ' +
-        'This is the normal way to start browsing: it creates a real sidebar tab through the DSH UI, ' +
-        'so the user can see the page and keep using it. ' +
-        'Use browser_claim instead when the user already opened the page they want. ' +
+        'This is one of exactly two ways to start work: it creates a real sidebar tab through the DSH UI, ' +
+        'so the user can see the page and keep using it. Use browser_claim instead when the user already ' +
+        'has the page they want open. ' +
+        'This tool fails when the DSH page half is not connected — it never takes over an existing tab as a ' +
+        'substitute, because that could destroy a page the user is working in. ' +
         PAGE_ID_NOTE,
       parameters: {
         type: 'object',
@@ -76,16 +78,13 @@ export function createTools(runtime) {
             url: string('The URL the tab reports after loading.'),
             title: string('Current page title, including the page marker.'),
             index: integer('Current playwright-cli tab index (informational only; never cache it).'),
-            how: string('new-tab when a sidebar tab was created, reused-tab when an existing tab was navigated.'),
-            note: string('Present when the degraded path was used.'),
           },
-          required: ['pageId', 'url', 'index', 'how'],
+          required: ['pageId', 'url', 'index'],
         },
         render: renderWith(
           (value) =>
-            `Opened ${value.url}\npageId: ${value.pageId}\ntab index: ${value.index} (${value.how})` +
-            (value.title ? `\ntitle: ${value.title}` : '') +
-            (value.note ? `\nnote: ${value.note}` : ''),
+            `Opened ${value.url}\npageId: ${value.pageId}\ntab index: ${value.index}` +
+            (value.title ? `\ntitle: ${value.title}` : ''),
         ),
       },
       async execute(args, exec) {
@@ -97,10 +96,14 @@ export function createTools(runtime) {
     {
       name: 'browser_claim',
       description:
-        'Take over the sidebar browser tab the user is currently on (playwright-cli\'s current tab) and return its title and URL. ' +
-        'SIDE EFFECT: this replaces the page marker on that tab, so any earlier pageId for the same tab stops resolving; ' +
-        'the user may be actively using that page, so ask before claiming when the intent is unclear. ' +
-        'Fails when the current tab is the DSH application page or a non-http(s) target.',
+        'Take over the browser page the user currently has open in the DSH right sidebar — the second of the ' +
+        'two ways to start work (the other is browser_open). Use it when the user says they already opened or ' +
+        'logged into a page and want you to continue from there. ' +
+        'The sidebar must be open with a browser tab selected: a collapsed sidebar keeps the page alive but ' +
+        'gives it no surface, so the plugin cannot tell which page the user is on. ' +
+        'SIDE EFFECT: this replaces the page marker on that tab, so any earlier pageId for the same tab stops ' +
+        'resolving; the user may be actively using that page, so ask before claiming when the intent is unclear. ' +
+        'Fails when no page is visible, when the page half is not connected, or when the page is still loading.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -592,9 +595,18 @@ export function createTools(runtime) {
             currentIndex: integer('Current tab index, or -1 when nothing is attached.'),
             tabs: { type: 'array', items: { type: 'object', additionalProperties: true } },
             pages: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            modes: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                open: boolean('True when browser_open can work right now (a page half is listening).'),
+                claim: boolean('True when browser_claim can work right now (a browser page is visible).'),
+              },
+              required: ['open', 'claim'],
+            },
             note: string(),
           },
-          required: ['action', 'attached', 'cdpUrl'],
+          required: ['action', 'attached', 'cdpUrl', 'modes'],
         },
         render: renderWith((value) => JSON.stringify(value, null, 2)),
       },
