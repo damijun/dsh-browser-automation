@@ -92,14 +92,21 @@ window.__ModuleLoader__.load({
       function capabilities() {
         const service = sidebar();
         let mounted = null;
+        let activeTabId = null;
         try {
           mounted = service.mounted.getSnapshot() ?? null;
         } catch (error) {
           mounted = null;
         }
+        try {
+          activeTabId = service.active()?.id ?? null;
+        } catch (error) {
+          activeTabId = null;
+        }
         return {
           hasSidebarRight: Boolean(service),
           mounted,
+          activeTabId,
           origin: window.location.origin,
           href: window.location.href,
           protocol: window.location.protocol,
@@ -127,30 +134,47 @@ window.__ModuleLoader__.load({
       async function openTab(url) {
         const service = sidebar();
         if (!service) throw new Error('the sidebar-right client service is not available in this page');
+
+        // Capture the tab set BEFORE opening: `openTabs` is a published snapshot
+        // store that catches up a beat later, so it cannot be asked "what did you
+        // just add" synchronously.
+        const before = new Set(service.openTabs.getSnapshot().map((tab) => tab.tabId));
+
         const deadline = Date.now() + 10_000;
         for (;;) {
-          const seen = new Set(service.openTabs.getSnapshot().map((tab) => tab.tabId));
           try {
             service.openTab('browser', { params: { url } });
+            break;
           } catch (error) {
+            // The store exists only once the Session's right-bar seat has rendered.
             if (/no session surface is mounted/.test(error.message) && Date.now() < deadline) {
               await sleep(250);
               continue;
             }
             throw error;
           }
-          const opened = service.openTabs
+        }
+
+        // Identify the tab. `active()` is synchronous and already points at it, so
+        // it is the primary answer; `openTabs` is the fallback that also carries
+        // the Session id. Failing to identify it is NOT a failure to open it: the
+        // Host finds the tab by diffing playwright-cli's own tab list.
+        const identifyDeadline = Date.now() + 3_000;
+        for (;;) {
+          const entry = service.openTabs
             .getSnapshot()
-            .find((tab) => tab.kind === 'browser' && !seen.has(tab.tabId));
-          if (opened === undefined) {
-            throw new Error('sidebarRight accepted the open request but no browser tab appeared');
+            .find((tab) => tab.kind === 'browser' && !before.has(tab.tabId));
+          if (entry !== undefined) {
+            return { tabId: entry.tabId, sessionId: entry.sessionId, address: entry.contentId, url };
           }
-          return {
-            tabId: opened.tabId,
-            sessionId: opened.sessionId,
-            address: opened.contentId,
-            url,
-          };
+          const active = service.active();
+          if (active && active.kind === 'browser' && !before.has(active.id)) {
+            return { tabId: active.id, sessionId: null, address: active.contentId, url };
+          }
+          if (Date.now() > identifyDeadline) {
+            return { tabId: null, sessionId: null, address: null, url, identified: false };
+          }
+          await sleep(100);
         }
       }
 
@@ -163,6 +187,21 @@ window.__ModuleLoader__.load({
         }
         if (command.kind === 'ping') {
           await call('result', { requestId: command.requestId, ok: true, value: capabilities() });
+          return;
+        }
+        if (command.kind === 'focus-tab') {
+          // A hidden sidebar tab has no compositor surface, so a screenshot of it
+          // times out. Bringing it to the front is the only way to capture it, and
+          // it is visible to the user (it changes which tab is showing).
+          const service = sidebar();
+          if (!service) throw new Error('the sidebar-right client service is not available in this page');
+          if (!command.tabId) throw new Error('focus-tab needs a tabId');
+          service.focus(command.tabId);
+          await call('result', {
+            requestId: command.requestId,
+            ok: true,
+            value: { focused: true, tabId: command.tabId },
+          });
           return;
         }
         await call('result', {
@@ -180,7 +219,13 @@ window.__ModuleLoader__.load({
             connected = true;
             if (stopped) return;
             const command = reply && reply.command;
-            if (!command) continue;
+            if (!command) {
+              // A held poll blocks for POLL_WAIT_MS; an immediate empty answer means
+              // something between the page and the Host is not holding the request.
+              // Do not turn that into a hot loop.
+              await sleep(120);
+              continue;
+            }
             try {
               await handle(command);
             } catch (error) {

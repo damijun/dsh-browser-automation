@@ -5,7 +5,14 @@ import { runInNewContext } from 'node:vm';
 
 import { Bridge } from '../src/bridge.js';
 import { createTools, sanitize } from '../src/tools.js';
-import { newPageId, sessionTag, extractPageIds, titleMarkerExpression, probeMarkerExpression } from '../src/page-id.js';
+import {
+  newPageId,
+  sessionTag,
+  extractPageIds,
+  titleMarkerExpression,
+  probeMarkerExpression,
+  installMarkerCode,
+} from '../src/page-id.js';
 import { SessionManager, discover } from '../src/sessions.js';
 import { normalizeUrl } from '../src/runtime.js';
 
@@ -214,6 +221,20 @@ test('index.js mounts the bridge as a loopback-only route, not an authenticated 
   assert.match(source, /sec-fetch-site/);
 });
 
+/**
+ * `WebServer.match` accepts a prefix as `pathname === prefix || pathname.startsWith(prefix + '/')`.
+ * A registered prefix that already ends in '/' can therefore only match a
+ * doubled slash, and the request silently reaches the SPA fallback instead.
+ */
+test('the bridge registers a prefix without a trailing slash and slices with it', () => {
+  const source = read('../index.js');
+  assert.match(source, /const ROUTE_PREFIX = '\/dsh-browser-automation\/bridge\/';/);
+  assert.match(source, /const ROUTE_REGISTRATION = ROUTE_PREFIX\.slice\(0, -1\);/);
+  assert.match(source, /path: ROUTE_REGISTRATION,/);
+  assert.doesNotMatch(source, /path: ROUTE_PREFIX,/);
+  assert.match(source, /\.slice\(ROUTE_PREFIX\.length\)/);
+});
+
 test('package.json wires both halves and the locale resources', () => {
   const manifest = JSON.parse(read('../package.json'));
   assert.equal(manifest.name, '@local/dsh-browser-automation');
@@ -301,12 +322,42 @@ function fakePage(initialTitle) {
     },
     setTimeout,
     clearTimeout,
+    // The real script retries briefly for late <title> elements; the sandbox has
+    // no need for that timer, and an un-cleared interval would keep node alive.
+    setInterval: () => 0,
+    clearInterval: () => {},
     JSON,
     String,
   };
   sandbox.fireMutation = () => observer?.callback();
   return sandbox;
 }
+
+test('the durable marker installer injects the same script through addInitScript', () => {
+  const pageId = 'dshpg-abcdef-01234567';
+  const code = installMarkerCode(pageId);
+  // It must be a valid Playwright snippet: a function taking `page`.
+  assert.match(code, /^async page => \{ await page\.addInitScript\(/);
+  assert.ok(code.includes(pageId));
+  // The embedded script is the same source the eval path uses, JSON-escaped.
+  const source = titleMarkerExpression(pageId);
+  assert.ok(code.includes(JSON.stringify(source)), 'addInitScript must receive the eval expression');
+  // And that source really is executable script text.
+  assert.doesNotThrow(() => new Function(source));
+  assert.doesNotThrow(() => new Function(`return ${code}`));
+});
+
+test('the marker expression reports the marker it installed', () => {
+  const pageId = 'dshpg-abcdef-01234567';
+  const sandbox = fakePage('Start');
+  const raw = runInNewContext(titleMarkerExpression(pageId), sandbox);
+  const parsed = JSON.parse(raw);
+  assert.equal(parsed.pageId, pageId);
+  assert.equal(parsed.title, `Start [${pageId}]`);
+  const probe = JSON.parse(runInNewContext(probeMarkerExpression, sandbox));
+  assert.equal(probe.pageId, pageId);
+  assert.equal(probe.url, 'https://example.test/');
+});
 
 test('normalizeUrl applies the sidebar browser rules', () => {
   assert.equal(normalizeUrl('example.com'), 'https://example.com/');
@@ -370,16 +421,48 @@ test('discover attributes tabs by session tag even without a registry entry', ()
   assert.equal(discoveredOwn[0].source, 'discovered');
 });
 
+test('a command that a page never answers is re-queued for the next poll', async () => {
+  const bridge = new Bridge({ pollTimeoutMs: 400, requestTimeoutMs: 3_000, deliveryTimeoutMs: 60 });
+  bridge.hello('live', {});
+  // Two held polls: the older one stands for a page that already reloaded, so its
+  // socket is dead and it will never answer.
+  const zombie = bridge.nextCommand('zombie', 400);
+  const live = bridge.nextCommand('live', 400);
+
+  const pending = bridge.request('open-tab', { url: 'https://a.test/' }, { timeoutMs: 2_500 });
+  // The newest poll gets it first (LIFO), so the zombie stays untouched.
+  const first = await live;
+  assert.equal(first.kind, 'open-tab');
+  assert.equal(await Promise.race([zombie.then(() => 'delivered'), Promise.resolve('idle')]), 'idle');
+
+  // Pretend the live page died too: nothing settles it, so it is re-queued and the
+  // next poll receives the same command instead of the caller timing out.
+  const next = bridge.nextCommand('live', 400);
+  const again = await next;
+  assert.equal(again.requestId, first.requestId);
+  bridge.submitResult({ requestId: again.requestId, ok: true, value: { tabId: 'tab9' } });
+  assert.deepEqual(await pending, { tabId: 'tab9' });
+});
+
 test('the bridge holds a poll until a command exists and settles it', async () => {
   const bridge = new Bridge({ pollTimeoutMs: 200, requestTimeoutMs: 500 });
   assert.equal(bridge.hasClient(), false);
   await assert.rejects(() => bridge.request('open-tab', { url: 'https://a.test/' }), /No DSH page is connected/);
 
+  // Announcing is not listening: only a held poll can receive a command.
   bridge.hello('client-1', { hasSidebarRight: true });
+  assert.equal(bridge.hasClient(), false);
+
+  const opened = bridge.nextCommand('client-1', 200);
+  const pending = bridge.request(
+    'open-tab',
+    // A payload field named `kind` must not be able to rewrite the envelope.
+    { url: 'https://a.test/', kind: 'browser' },
+    { timeoutMs: 1_000 },
+  );
   assert.equal(bridge.hasClient(), true);
 
-  const pending = bridge.request('open-tab', { url: 'https://a.test/' }, { timeoutMs: 1_000 });
-  const command = await bridge.nextCommand('client-1', 200);
+  const command = await opened;
   assert.equal(command.kind, 'open-tab');
   assert.equal(command.url, 'https://a.test/');
   assert.equal(bridge.submitResult({ requestId: command.requestId, ok: true, value: { tabId: 'tab3' } }).ok, true);
@@ -393,8 +476,9 @@ test('the bridge holds a poll until a command exists and settles it', async () =
 test('the bridge rejects a failed result and times out a silent page', async () => {
   const bridge = new Bridge({ pollTimeoutMs: 100, requestTimeoutMs: 100 });
   bridge.hello('client-1');
+  const opened = bridge.nextCommand('client-1', 100);
   const failed = bridge.request('open-tab', { url: 'https://a.test/' }, { timeoutMs: 500 });
-  const command = await bridge.nextCommand('client-1', 100);
+  const command = await opened;
   bridge.submitResult({ requestId: command.requestId, ok: false, error: 'no session surface is mounted' });
   await assert.rejects(() => failed, /no session surface is mounted/);
 
@@ -408,3 +492,4 @@ test('sanitize removes undefined so tool results stay lossless JSON', () => {
   assert.equal(sanitize(undefined), null);
   assert.throws(() => sanitize({ big: 1n }));
 });
+

@@ -22,8 +22,14 @@ export const inject = ['tools', 'webServer'];
  * URL (`dsh-browser-automation/bridge/<action>`), which is what makes one code
  * path work in both carriers: the Web app resolves it against its own origin,
  * and Desktop forwards `dsh-app://app/<path>` to the Host's loopback port.
+ *
+ * The route table matches a prefix as `pathname === prefix || pathname.startsWith(prefix + '/')`,
+ * so the registered path must NOT carry a trailing slash: `/x/bridge/` would only
+ * ever match `/x/bridge//…` and silently fall through to the SPA handler, which
+ * answers 404 to GET and 405 to POST.
  */
 const ROUTE_PREFIX = '/dsh-browser-automation/bridge/';
+const ROUTE_REGISTRATION = ROUTE_PREFIX.slice(0, -1);
 
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx
@@ -60,7 +66,7 @@ export function apply(ctx, config) {
       try {
         dispose = ctx.webServer.register({
           kind: 'prefix',
-          path: ROUTE_PREFIX,
+          path: ROUTE_REGISTRATION,
           handler: (request, response) => serve({ request, response, bridge, settings, log }),
         });
       } catch (error) {

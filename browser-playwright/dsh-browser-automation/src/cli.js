@@ -368,9 +368,10 @@ export class CliBridge {
 
 /**
  * The CLI writes user-facing errors to stdout (verified: an unattached session
- * prints "The browser 'x' is not open" on stdout and exits 1), and a daemon
- * startup failure dumps a Node stack. So: drop stack noise, then prefer an
- * explicit error line over the banner that precedes it.
+ * prints "The browser 'x' is not open" on stdout and exits 1), wraps action
+ * failures in a `### Error` banner followed by `Call log:` noise, and dumps a Node
+ * stack when its daemon dies. So: drop all of that, then prefer the line that
+ * actually names the failure.
  */
 export function describeFailure(args, code, signal, stdout, stderr) {
   const command = args.find((arg) => !arg.startsWith('-')) ?? args[0] ?? 'command';
@@ -379,15 +380,18 @@ export function describeFailure(args, code, signal, stdout, stderr) {
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter((line) => line.trim() !== '')
+    .filter((line) => !/^#{2,}\s*(Error|Result)/.test(line.trim()))
+    .filter((line) => !/^Call log:/i.test(line.trim()))
+    .filter((line) => !/^\s*-\s/.test(line))
     .filter((line) => !/^at\s/.test(line.trim()))
     .filter((line) => !/^\s*\^+\s*$/.test(line))
     .filter((line) => !/\.(c?js|mjs)\s*:\d+$/.test(line.trim()))
     .filter((line) => !/^[A-Za-z]:\\/.test(line.trim()));
-  const interesting =
-    lines.filter((line) => /\b(error|Error|refused|not open|invalid|unsupported)\b/.test(line)).slice(-1)[0] ??
-    lines.slice(-1)[0];
-  const context = lines.slice(0, 4).join('\n');
+  const named = lines.filter((line) =>
+    /(\b\w*Error\b|\berror\b|refused|not open|invalid|unsupported|denied)/i.test(line),
+  );
+  const interesting = named.slice(-1)[0] ?? lines.slice(-1)[0];
   const reason = signal ? `was killed by ${signal}` : `exited with code ${code}`;
-  const detail = interesting && interesting.trim() !== '' ? interesting.trim() : context;
+  const detail = interesting && interesting.trim() !== '' ? interesting.trim() : '';
   return `playwright-cli ${command} ${reason}${detail ? `: ${detail}` : '.'}`;
 }

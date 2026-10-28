@@ -266,9 +266,10 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
+            index: integer('Current tab index (informational only).'),
             path: string('Absolute path of the written PNG.'),
           },
-          required: ['pageId', 'path'],
+          required: ['pageId', 'index', 'path'],
         },
         render: renderWith((value) => `Screenshot saved to ${value.path}`),
       },

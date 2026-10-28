@@ -73,24 +73,48 @@ export function titleMarkerExpression(pageId) {
     '  const suffix = " [" + id + "]";',
     '  const previous = /\\[\\s*dshpg-[0-9a-f]{6}-[0-9a-f]{8}\\s*\\]/g;',
     '  const tag = () => {',
-    '    const current = String(document.title);',
-    '    if (current.includes(id)) return;',
-    '    document.title = current.replace(previous, "").replace(/\\s+$/, "") + suffix;',
+    '    try {',
+    '      const current = String(document.title);',
+    '      if (current.includes(id)) return;',
+    '      document.title = current.replace(previous, "").replace(/\\s+$/, "") + suffix;',
+    '    } catch (error) {}',
     '  };',
     '  tag();',
-    '  try { if (window.__dshBrowserAutomation) window.__dshBrowserAutomation.dispose(); } catch (error) {}',
+    '  try { if (window.__dshBrowserAutomation && window.__dshBrowserAutomation.dispose) window.__dshBrowserAutomation.dispose(); } catch (error) {}',
     '  let timer = 0;',
     '  const schedule = () => {',
     '    if (timer) return;',
-    '    timer = setTimeout(() => { timer = 0; try { tag(); } catch (error) {} }, 60);',
+    '    timer = setTimeout(() => { timer = 0; tag(); }, 60);',
     '  };',
-    '  const observer = new MutationObserver(schedule);',
-    '  const target = document.head || document.documentElement;',
-    '  observer.observe(target, { childList: true, subtree: true, characterData: true });',
-    '  window.__dshBrowserAutomation = { pageId: id, dispose: () => { observer.disconnect(); if (timer) clearTimeout(timer); } };',
+    '  try {',
+    '    const observer = new MutationObserver(schedule);',
+    '    const target = document.head || document.documentElement;',
+    '    if (target) observer.observe(target, { childList: true, subtree: true, characterData: true });',
+    '    window.__dshBrowserAutomation = { pageId: id, dispose: () => { observer.disconnect(); if (timer) clearTimeout(timer); } };',
+    '  } catch (error) {}',
+    // An init script runs before the document has a <title>; keep trying briefly.
+    '  let tries = 0;',
+    '  const retry = setInterval(() => { tag(); if (++tries > 40) clearInterval(retry); }, 100);',
     '  return JSON.stringify({ pageId: id, title: document.title, url: location.href });',
     '})()',
   ].join('\n');
+}
+
+/**
+ * Playwright code that makes the marker survive every future navigation.
+ *
+ * A navigation destroys the injected script and observer, so a marker applied
+ * only through `eval` disappears the first time the page navigates — which is
+ * most clicks on most sites. `page.addInitScript` is registered on the tab and
+ * runs on each new document (verified across CLI invocations and across origins),
+ * so the marker is re-applied without spending another round trip per action.
+ *
+ * @param {string} pageId
+ * @returns {string} JavaScript for `playwright-cli run-code`
+ */
+export function installMarkerCode(pageId) {
+  const script = titleMarkerExpression(pageId);
+  return `async page => { await page.addInitScript(${JSON.stringify(script)}); return "installed" }`;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { CliError } from './cli.js';
 import { resolveIndex, parseTabList, currentIndex, describeTabs } from './tab-list.js';
-import { titleMarkerExpression, probeMarkerExpression } from './page-id.js';
+import { titleMarkerExpression, probeMarkerExpression, installMarkerCode } from './page-id.js';
 
 /**
  * Parse the JSON value playwright-cli prints for `eval --raw`.
@@ -19,6 +19,35 @@ export function parseEvalOutput(stdout) {
   } catch {
     return text;
   }
+}
+
+/**
+ * The marker script returns a JSON *string*, so it arrives double-encoded.
+ *
+ * @param {string} stdout
+ */
+export function parseMarkerOutput(stdout) {
+  const parsed = parseEvalOutput(stdout);
+  if (typeof parsed !== 'string') return parsed;
+  try {
+    return JSON.parse(parsed);
+  } catch {
+    return { title: parsed };
+  }
+}
+
+/**
+ * Trim the bookkeeping playwright-cli appends to every action result
+ * (`- [Snapshot](.playwright-cli/page-….yml)`), which is noise in a tool result.
+ *
+ * @param {string} stdout
+ */
+export function actionOutput(stdout) {
+  return String(stdout ?? '')
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*[-*]\s*\[Snapshot\]/.test(line))
+    .join('\n')
+    .trim();
 }
 
 /**
@@ -190,15 +219,30 @@ export class PageDriver {
       pageId,
       async () => {
         const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId)]);
-        const parsed = parseEvalOutput(stdout);
-        if (typeof parsed === 'string') {
-          try {
-            return JSON.parse(parsed);
-          } catch {
-            return { title: parsed };
-          }
-        }
-        return parsed;
+        return parseMarkerOutput(stdout);
+      },
+      target,
+    );
+  }
+
+  /**
+   * Install the marker durably and apply it to the current document.
+   *
+   * The init script makes the marker survive every later navigation; the eval
+   * covers the document that is already loaded (an init script only runs on the
+   * next one). Two CLI calls, paid once per open/claim.
+   *
+   * @param {string} pageId
+   * @param {ResolvedTab} [target]
+   * @returns {Promise<{ title?: string, url?: string } | undefined>}
+   */
+  async installMarker(pageId, target) {
+    return this.withPage(
+      pageId,
+      async () => {
+        await this.cli.run(['--raw', 'run-code', installMarkerCode(pageId)], { timeoutMs: 60_000 });
+        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId)]);
+        return parseMarkerOutput(stdout);
       },
       target,
     );
@@ -215,15 +259,7 @@ export class PageDriver {
       pageId,
       async () => {
         const { stdout } = await this.cli.run(['--raw', 'eval', probeMarkerExpression]);
-        const parsed = parseEvalOutput(stdout);
-        if (typeof parsed === 'string') {
-          try {
-            return JSON.parse(parsed);
-          } catch {
-            return { title: parsed };
-          }
-        }
-        return parsed;
+        return parseMarkerOutput(stdout);
       },
       target,
     );
@@ -281,7 +317,7 @@ export class PageDriver {
         if (options.button) args.push(options.button);
         for (const modifier of options.modifiers ?? []) args.push(`--modifiers=${modifier}`);
         const { stdout } = await this.cli.run(args);
-        return stdout.trim();
+        return actionOutput(stdout);
       },
       target,
     );
@@ -299,7 +335,7 @@ export class PageDriver {
         const args = ['--raw', 'fill', options.ref, options.text];
         if (options.submit) args.push('--submit');
         const { stdout } = await this.cli.run(args);
-        return stdout.trim();
+        return actionOutput(stdout);
       },
       target,
     );
@@ -315,7 +351,7 @@ export class PageDriver {
       pageId,
       async () => {
         const { stdout } = await this.cli.run(['--raw', 'press', options.key]);
-        return stdout.trim();
+        return actionOutput(stdout);
       },
       target,
     );
@@ -381,7 +417,13 @@ export class PageDriver {
       pageId,
       async () => {
         const { stdout } = await this.cli.run(['--raw', 'run-code', options.code], { timeoutMs: 120_000 });
-        return stdout.trim();
+        const output = stdout.trim();
+        // A snippet may rewrite the document (page.setContent) or replace its head,
+        // which discards the marker without any navigation that would re-run the
+        // init script. Re-applying it here keeps the pageId resolvable.
+        const { stdout: marked } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId)]);
+        const marker = parseMarkerOutput(marked);
+        return { output, title: marker?.title, url: marker?.url };
       },
       target,
     );
@@ -393,3 +435,4 @@ export class PageDriver {
     return { index: currentIndex(stdout) ?? -1, tabs: describeTabs(parseTabList(stdout).tabs) };
   }
 }
+

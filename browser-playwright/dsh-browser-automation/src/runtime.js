@@ -1,8 +1,8 @@
 import path from 'node:path';
 
 import { CliBridge } from './cli.js';
-import { PageDriver, parseEvalOutput } from './driver.js';
-import { newPageId, sessionTag, extractPageIds, titleMarkerExpression } from './page-id.js';
+import { PageDriver } from './driver.js';
+import { newPageId, sessionTag, extractPageIds } from './page-id.js';
 import { SessionManager, discover } from './sessions.js';
 import { resolveIndex } from './tab-list.js';
 
@@ -110,8 +110,16 @@ export class Runtime {
         );
       }
       await this.cli.run(['--raw', 'tab-select', String(found.index)]);
-      const marked = await this.injectMarker(found.index, pageId);
-      this.manager.register({ pageId, sessionId: request.sessionId, url: found.url, title: marked.title, source: 'open' });
+      const marked = await this.injectMarker(found, pageId);
+      this.manager.register({
+        pageId,
+        sessionId: request.sessionId,
+        url: found.url,
+        title: marked.title,
+        source: 'open',
+        // The sidebar tab id lets a later screenshot bring the tab to the front.
+        tabId: opened.detail?.tabId ?? null,
+      });
       return {
         pageId,
         url: marked.url || found.url,
@@ -132,7 +140,7 @@ export class Runtime {
       return this.degradedOpen(url, 'The page bridge is not mounted.');
     }
     try {
-      const result = await this.bridge.request('open-tab', { url, kind: 'browser' });
+      const result = await this.bridge.request('open-tab', { url });
       this.log(`sidebar opened a tab for ${url}: ${JSON.stringify(result)}`);
       return { how: 'new-tab', detail: result };
     } catch (error) {
@@ -193,28 +201,24 @@ export class Runtime {
   }
 
   /**
-   * Append (or replace) the marker on the currently selected tab.
+   * Install (or replace) the marker on one tab: an init script so every later
+   * navigation re-applies it, plus one eval for the document already loaded.
    *
-   * @param {number} index selected tab index
+   * @param {{ index: number, title?: string, url?: string, current?: boolean }} tab
    * @param {string} pageId
    */
-  async injectMarker(index, pageId) {
+  async injectMarker(tab, pageId) {
     const driver = this.ensureDriver();
-    const cli = this.cli;
-    const { stdout } = await cli.run(['--raw', 'eval', titleMarkerExpression(pageId, { replace: true })]);
-    const parsed = parseEvalOutput(stdout);
-    let value = parsed;
-    if (typeof parsed === 'string') {
-      try {
-        value = JSON.parse(parsed);
-      } catch {
-        value = { title: parsed };
-      }
-    }
-    const title = typeof value?.title === 'string' ? value.title : undefined;
-    const current = typeof value?.url === 'string' ? value.url : undefined;
-    this.log(`marked tab ${index} as ${pageId}`);
-    return { title, url: current };
+    const marked = await driver.installMarker(pageId, tab).catch(async (error) => {
+      // A page that refuses init scripts (CSP or a non-document target) still gets
+      // the one-shot marker, which is better than failing the whole open.
+      this.log(`init script failed (${error.message}); falling back to a one-shot marker`);
+      return driver.mark(pageId, tab);
+    });
+    const title = typeof marked?.title === 'string' ? marked.title : undefined;
+    const url = typeof marked?.url === 'string' ? marked.url : undefined;
+    this.log(`marked tab ${tab.index} as ${pageId}`);
+    return { title, url };
   }
 
   /**
@@ -242,7 +246,7 @@ export class Runtime {
     const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
     const originalTitle = current.title.replace(/\s*\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/g, '').trim();
     await this.cli.run(['--raw', 'tab-select', String(current.index)]);
-    const marked = await this.injectMarker(current.index, pageId);
+    const marked = await this.injectMarker(current, pageId);
     for (const previous of previousIds) this.manager.unregister(previous);
     this.manager.register({
       pageId,
@@ -251,6 +255,16 @@ export class Runtime {
       title: originalTitle,
       source: 'claim',
     });
+    // Learn which sidebar tab this is, so a later screenshot can focus it. The
+    // claim path is CLI-only, so this is the first moment the page can be asked.
+    if (this.bridge) {
+      this.bridge
+        .request('ping', {}, { timeoutMs: 4_000 })
+        .then((caps) => {
+          if (caps?.activeTabId) this.manager.update(pageId, { tabId: caps.activeTabId });
+        })
+        .catch(() => {});
+    }
     return {
       pageId,
       title: originalTitle,
@@ -336,14 +350,33 @@ export class Runtime {
   async screenshot(request) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const file = path.join(this.ensureDriver().cli.workdir(), `screenshot-${stamp}.png`);
+    // A sidebar tab that is not in front has no compositor surface, so Chromium
+    // cannot capture it and Playwright times out. Ask the page to focus it first.
+    const record = this.manager.get(request.pageId);
+    if (record?.tabId && this.bridge?.hasClient()) {
+      await this.bridge
+        .request('focus-tab', { tabId: record.tabId }, { timeoutMs: 4_000 })
+        .catch((error) => this.log(`could not focus ${record.tabId}: ${error.message}`));
+    }
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
-        await driver.screenshot(
-          request.pageId,
-          { path: file, fullPage: request.fullPage, target: request.target },
-          tab,
-        );
+        try {
+          await driver.screenshot(
+            request.pageId,
+            { path: file, fullPage: request.fullPage, target: request.target },
+            tab,
+          );
+        } catch (error) {
+          if (/Timeout/i.test(error.message)) {
+            throw new Error(
+              `The browser could not capture this tab (${error.message}). A sidebar tab that is not in front ` +
+                'has no rendering surface; bring it to the front in the DSH sidebar and retry. ' +
+                'browser_snapshot reads the page without capturing it and always works.',
+            );
+          }
+          throw error;
+        }
         return { path: file };
       },
       request.signal,

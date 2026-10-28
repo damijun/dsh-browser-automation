@@ -193,6 +193,18 @@ node --test
 | `Could not attach playwright-cli to DSH at http://127.0.0.1:9222` | DSH 没带 `--remote-debugging-port=9222` 启动；改快捷方式并重启 |
 | `browser_status` 里 `bridge.clients` 为空 | 页面还没加载 client.js：刷新 DSH 窗口（或重启） |
 | `bridgeError: cannot get property "webServer" without inject` | 插件 generation 过期：重启 DSH 让新代码生效 |
+| `browser_screenshot` 报截图超时 | 那个侧边栏标签页不在前台、没有渲染面；先切到前台（插件会自动 focus 已知 tabId 的页，claim 来的页可能拿不到） |
+| CLI 超时 | `playwright-cli list`（看守护进程），必要时 `playwright-cli -s=dsh detach` |
+| 启动即崩溃：`web boot: 1 entry did not activate / … import failed` | client bundle 的 revision 与内容不同步（改完 client.js 立刻刷新页面时出现）。**先把本行 disable**（`set_plugin enabled=false`）再启动，进应用后 enable，最后刷新一次页面 |
+| `detach` 之后第一次操作很慢 | 正常：下一次操作会重新 `attach`（含一次重试） |
+
+### 关于"启动即崩"
+
+DSH 在 **boot 阶段**把"任一行激活失败"当致命错误，所以一个坏掉的插件会让整个界面起不来；
+运行期 reload 失败只会让那一行不激活（有诊断、不崩）。这两个行为不一样，排障先分清。
+
+改完 `client.js` 后不要立刻刷新页面，等 `plugin_manager` 那步完成。正确顺序：
+改文件 → disable → enable（宿主侧生效）→ 刷新页面（客户端侧生效）。
 | `PAGE_NOT_FOUND` | 页面被用户关掉了，或标记还没补回；`browser_list` 看现状，再 `browser_open` / `browser_claim` |
 | `AMBIGUOUS_PAGE` | 同一标题出现两个相同 `pageId`（几乎不可能是 bug 之外的原因）；`browser_list scope=all` 看全量 |
 | `browser_open` 返回 `how: "reused-tab"` | 页面桥没连上，走的是降级路径；刷新窗口后重试 |

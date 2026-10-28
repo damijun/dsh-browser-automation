@@ -30,6 +30,8 @@ export class Bridge {
   constructor(options = {}) {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
     this.pollTimeoutMs = options.pollTimeoutMs ?? 15_000;
+    /** How long a handed-over command waits for its page before being re-queued. */
+    this.deliveryTimeoutMs = options.deliveryTimeoutMs ?? 4_000;
     this.log = options.log ?? (() => {});
     /** @type {Map<string, ClientRecord>} */
     this.clients = new Map();
@@ -56,10 +58,18 @@ export class Bridge {
     return { ok: true, pollTimeoutMs: this.pollTimeoutMs };
   }
 
-  /** Whether a page has announced itself recently. */
+  /**
+   * Whether a page is actually listening.
+   *
+   * A `hello` alone is not enough: anything that can reach the loopback route
+   * (a probe, a stale tab) can announce itself. Only a page that has held a poll
+   * is able to receive a command.
+   */
   hasClient() {
     const cutoff = Date.now() - 60_000;
-    for (const record of this.clients.values()) if (record.seenAt >= cutoff) return true;
+    for (const record of this.clients.values()) {
+      if (record.polled === true && record.seenAt >= cutoff) return true;
+    }
     return false;
   }
 
@@ -76,8 +86,14 @@ export class Bridge {
   nextCommand(clientId, waitMs = this.pollTimeoutMs, signal) {
     if (clientId) {
       const record = this.clients.get(clientId);
-      if (record) record.seenAt = Date.now();
-      else this.hello(clientId, {});
+      if (record) {
+        record.seenAt = Date.now();
+        record.polled = true;
+      } else {
+        this.hello(clientId, {});
+        const created = this.clients.get(clientId);
+        if (created) created.polled = true;
+      }
     }
     const queued = this.queue.shift();
     if (queued) return Promise.resolve(queued);
@@ -113,6 +129,7 @@ export class Bridge {
     if (!pending) return { ok: false, error: `bridge: no pending request ${requestId}` };
     this.pending.delete(requestId);
     clearTimeout(pending.timer);
+    clearTimeout(pending.delivery);
     if (payload.ok === false) {
       pending.reject(new Error(payload.error || 'The DSH page reported a failure.'));
     } else {
@@ -141,7 +158,10 @@ export class Bridge {
     }
     const requestId = randomUUID();
     const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
-    const command = { requestId, kind, ...payload, queuedAt: Date.now() };
+    // `kind` and `requestId` are the envelope, so they win over payload fields of
+    // the same name: a payload that carries its own `kind` must not be able to
+    // turn an "open-tab" command into something the page does not implement.
+    const command = { ...payload, requestId, kind, queuedAt: Date.now() };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
@@ -150,14 +170,38 @@ export class Bridge {
       }, timeoutMs);
       if (typeof timer.unref === 'function') timer.unref();
       this.pending.set(requestId, { resolve, reject, timer });
-      const waiter = this.waiters.shift();
-      if (waiter) {
-        clearTimeout(waiter.timer);
-        waiter.resolve(command);
-      } else {
-        this.queue.push(command);
-      }
+      this.dispatch(command);
     });
+  }
+
+  /**
+   * Hand one command to the newest held poll.
+   *
+   * Newest first, because a page reload leaves the previous page's poll behind:
+   * that socket is dead but its waiter lingers until its own timeout, and a FIFO
+   * hand-off would spend the whole request timeout talking to it. Delivery is
+   * also not confirmation — if the page that received the command never answers,
+   * it is re-queued once for whatever polls next.
+   *
+   * @param {Command} command
+   * @param {number} [attempt]
+   */
+  dispatch(command, attempt = 0) {
+    const waiter = this.waiters.pop();
+    if (!waiter) {
+      this.queue.push(command);
+      return;
+    }
+    clearTimeout(waiter.timer);
+    waiter.resolve(command);
+    const pending = this.pending.get(command.requestId);
+    if (!pending || attempt >= 1) return;
+    pending.delivery = setTimeout(() => {
+      if (!this.pending.has(command.requestId)) return;
+      this.log(`no answer for ${command.kind}; re-queueing it for the next poll`);
+      this.dispatch(command, attempt + 1);
+    }, this.deliveryTimeoutMs);
+    if (typeof pending.delivery.unref === 'function') pending.delivery.unref();
   }
 
   /** Wake every held poll (plugin unload). */
@@ -170,6 +214,7 @@ export class Bridge {
     this.waiters = [];
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
+      clearTimeout(pending.delivery);
       pending.reject(new Error('bridge: the plugin unloaded before the page answered'));
     }
     this.pending.clear();
