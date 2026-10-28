@@ -240,7 +240,7 @@ test('client.js is syntactically valid JavaScript', () => {
   assert.doesNotThrow(() => new Function(source));
   assert.match(source, /window\.__ModuleLoader__\.load/);
   assert.match(source, /id: '@local\/dsh-browser-automation'/);
-  assert.match(source, /inject: \['sidebarRight'\]/);
+  assert.match(source, /inject: \['sidebarRight', 'layout'\]/);
   // The bridge must stay document-relative: an absolute origin would break the
   // Desktop `dsh-app://app/` carrier (the protocol is named only in the comment).
   assert.match(source, /new URL\(`\$\{BRIDGE_PATH\}\$\{action\}`, document\.baseURI\)/);

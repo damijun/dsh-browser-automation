@@ -256,7 +256,10 @@ export function createTools(runtime) {
       name: 'browser_screenshot',
       description:
         'Save a PNG screenshot of a page to disk and return its absolute path. ' +
-        'Screenshots are for judging layout, spacing, overflow and colour; read text with browser_snapshot instead.',
+        'Screenshots are for judging layout, spacing, overflow and colour; read text with browser_snapshot instead. ' +
+        'SIDE EFFECT: Chromium only frames a sidebar tab that is on screen, so if this tab is not the visible one the ' +
+        'plugin brings it to the front (expanding the right sidebar if it is collapsed) and leaves it there. ' +
+        'The image is the sidebar tab as the user sees it.',
       parameters: {
         type: 'object',
         additionalProperties: false,

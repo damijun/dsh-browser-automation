@@ -4,17 +4,22 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 /**
- * The Client half is only ever loaded by the DSH page's module loader. A mistake
- * there is fatal at boot ("web boot: 1 entry did not activate … import failed")
- * and the detail exists only in the renderer console — exactly the situation this
- * harness prevents. It loads the real file the way the page does and drives
- * `apply()` against a fake sidebar service.
+ * The Client half runs inside the DSH page: it is the only place that can create a
+ * sidebar tab (`ctx.sidebarRight.openTab`), see which page the user has in front,
+ * or turn a hidden tab into something Chromium will paint. A mistake in it is fatal
+ * at boot and visible only in the renderer console, so this file loads the real
+ * `client.js` the way the page's module loader does and drives `apply()`.
  */
 
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8');
 
 /**
- * @param {{ reply?: (url: string, init: unknown) => object }} [options]
+ * @param {{
+ *   reply?: (url: string, init: unknown) => object,
+ *   webviews?: Array<{ title: string, url: string, width: number, height: number }>,
+ *   chips?: Array<{ tabId: string, text: string }>,
+ *   expanded?: boolean,
+ * }} [options]
  */
 function harness(options = {}) {
   let loaded;
@@ -30,28 +35,49 @@ function harness(options = {}) {
         },
       },
       location: { origin: 'dsh-app://app', href: 'dsh-app://app/', protocol: 'dsh-app:' },
+      // A real viewport size: onScreen intersects the carrier box with it.
+      innerWidth: options.innerWidth ?? 1280,
+      innerHeight: options.innerHeight ?? 800,
       crypto: { randomUUID: () => 'client-1' },
       sessionStorage: { getItem: () => null, setItem: () => {} },
       getComputedStyle: () => ({ display: 'flex', visibility: 'visible' }),
     },
-    // One document object, as in a real page: baseURI plus the carriers. Two of
-    // them, one hidden (zero box), so visible-page detection has a real choice.
+    // One document object, as in a real page: baseURI plus the carriers and the
+    // tab strip chips. Two webviews, one hidden (zero box), so "is this page
+    // visible" has a real choice to make.
     document: {
       baseURI: 'dsh-app://app/',
       querySelectorAll: (selector) => {
-        if (selector !== 'webview') return [];
-        return [
-          {
-            getBoundingClientRect: () => ({ width: 0, height: 0 }),
-            getURL: () => 'https://hidden.test/',
-            getTitle: () => 'Hidden',
-          },
-          {
-            getBoundingClientRect: () => ({ width: 800, height: 600 }),
-            getURL: () => 'https://visible.test/page',
-            getTitle: () => 'Visible page',
-          },
-        ];
+        if (selector === 'webview') {
+          return (
+            options.webviews ?? [
+              { title: 'Hidden page [dshpg-aaaaaa-00000001]', url: 'https://hidden.test/', width: 0, height: 0 },
+              { title: 'Visible page', url: 'https://visible.test/page', width: 800, height: 600 },
+            ]
+          ).map((view) => ({
+            getTitle: () => view.title,
+            getURL: () => view.url,
+            getBoundingClientRect: () => {
+              const x = view.x ?? 0;
+              const y = view.y ?? 0;
+              return {
+                width: view.width,
+                height: view.height,
+                left: x,
+                top: y,
+                right: x + view.width,
+                bottom: y + view.height,
+              };
+            },
+          }));
+        }
+        if (selector === '[data-sidebar-right-tab]') {
+          return (options.chips ?? []).map((chip) => ({
+            getAttribute: () => chip.tabId,
+            textContent: chip.text,
+          }));
+        }
+        return [];
       },
     },
     URL,
@@ -90,23 +116,34 @@ function harness(options = {}) {
   /** Start the plugin and remember how to stop its loop. */
   const start = (overrides = {}) => {
     const opened = [];
+    const calls = [];
+    let expanded = overrides.expanded ?? options.expanded ?? true;
+    const toggle = overrides.toggleExpanded ?? options.toggleExpanded;
     const service = {
       mounted: { getSnapshot: () => 'session-1' },
       openTabs: { getSnapshot: () => overrides.tabs ?? [] },
       active: () => overrides.active ?? { id: 'tab1', kind: 'browser', contentId: 'sidebar://browser/u1' },
       openTab: (kind, opts) => opened.push({ kind, opts }),
-      focus: (tabId) => opened.push({ focused: tabId }),
+      focus: (tabId) => calls.push(['focus', tabId]),
+      isExpanded: () => expanded,
+      toggleExpanded: toggle
+        ? () => toggle(calls, () => (expanded = true))
+        : () => {
+            expanded = true;
+            calls.push(['toggleExpanded']);
+          },
     };
     const plugin = loaded.factory(() => ({}));
     plugin.apply({
       sidebarRight: service,
+      layout: { openRightbar: () => calls.push(['openRightbar']) },
       effect: (callback) => {
         const cleanup = callback();
         if (typeof cleanup === 'function') disposers.push(cleanup);
         return () => {};
       },
     });
-    return { opened, service, plugin };
+    return { opened, calls, service, plugin };
   };
 
   const stop = () => {
@@ -123,7 +160,7 @@ test('the client module loads through the page module loader', () => {
   assert.ok(loaded, 'the module never called window.__ModuleLoader__.load');
   assert.equal(loaded.id, '@local/dsh-browser-automation');
   const plugin = loaded.factory(() => ({}));
-  assert.equal(JSON.stringify(plugin.inject), JSON.stringify(['sidebarRight']));
+  assert.equal(JSON.stringify(plugin.inject), JSON.stringify(['sidebarRight', 'layout']));
   assert.equal(typeof plugin.apply, 'function');
 });
 
@@ -140,7 +177,10 @@ test('apply announces the page on the document-relative bridge URL', async () =>
   assert.equal(body.mounted, 'session-1');
   assert.equal(body.activeTabId, 'tab1');
   // The visible carrier is what browser_claim needs: the hidden one must be skipped.
-  assert.equal(JSON.stringify(body.visible), JSON.stringify({ url: 'https://visible.test/page', title: 'Visible page' }));
+  assert.equal(
+    JSON.stringify(body.visible),
+    JSON.stringify({ url: 'https://visible.test/page', title: 'Visible page' }),
+  );
 });
 
 test('an open-tab command reaches ctx.sidebarRight.openTab once', async () => {
@@ -171,24 +211,135 @@ test('an open-tab command reaches ctx.sidebarRight.openTab once', async () => {
   assert.equal(body.value.address, 'sidebar://browser/u1');
 });
 
-test('a focus-tab command focuses the tab instead of opening one', async () => {
+/**
+ * `prepare-capture` is how a screenshot becomes possible: the Host cannot frame a
+ * sidebar tab that is not on screen, so the page brings it to the front (expanding
+ * the panel when needed) and reports what it did.
+ */
+function captureHarness(options) {
   let delivered = false;
-  const { requests, start, stop } = harness({
+  return harness({
+    ...options,
     reply: (url) => {
       if (url.endsWith('/poll') && !delivered) {
         delivered = true;
-        return { ok: true, value: { command: { requestId: 'r2', kind: 'focus-tab', tabId: 'tab7' } } };
+        return {
+          ok: true,
+          value: { command: { requestId: 'r3', kind: 'prepare-capture', pageId: 'dshpg-aaaaaa-00000001' } },
+        };
       }
       return { ok: true, value: { command: null } };
     },
   });
-  const { opened } = start();
+}
+
+test('prepare-capture does nothing when the page is already visible', async () => {
+  const { requests, start, stop } = captureHarness({
+    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 573, height: 916 }],
+    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+  });
+  const { calls } = start();
   await settle(80);
   stop();
 
-  assert.equal(JSON.stringify(opened), JSON.stringify([{ focused: 'tab7' }]));
   const results = requests.filter((request) => request.url.endsWith('/result'));
-  assert.equal(JSON.parse(results[0].init.body).value.focused, true);
+  const value = JSON.parse(results[0].init.body).value;
+  assert.equal(value.visible, true);
+  assert.equal(value.tabId, 'tab7');
+  assert.deepEqual(calls, [], 'a visible page must not be focused or expanded');
+});
+
+test('prepare-capture brings a hidden page to the front by its chip', async () => {
+  const { requests, start, stop } = captureHarness({
+    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 0, height: 0 }],
+    chips: [
+      { tabId: 'tab6', text: 'Other page [dshpg-aaaaaa-00000009]' },
+      { tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' },
+    ],
+  });
+  const { calls } = start();
+  await settle(80);
+  stop();
+
+  assert.equal(JSON.stringify(calls), JSON.stringify([['focus', 'tab7']]));
+  const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
+  assert.equal(value.visible, false);
+  assert.equal(value.tabId, 'tab7');
+  assert.equal(value.expandedNow, false);
+  assert.equal(value.expandVia, null);
+});
+
+test('prepare-capture expands a collapsed sidebar before looking for the chip', async () => {
+  const { requests, start, stop } = captureHarness({
+    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 0, height: 0 }],
+    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+    expanded: false,
+  });
+  const { calls } = start();
+  await settle(600);
+  stop();
+
+  assert.equal(JSON.stringify(calls), JSON.stringify([['toggleExpanded'], ['focus', 'tab7']]));
+  const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
+  assert.equal(value.expandedNow, true);
+  assert.equal(value.expandVia, 'sidebarRight.toggleExpanded');
+});
+
+test('prepare-capture falls back to layout.openRightbar when the toggle throws', async () => {
+  const { requests, start, stop } = captureHarness({
+    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 0, height: 0 }],
+    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+    expanded: false,
+    toggleExpanded: () => {
+      throw new Error('no session surface is mounted');
+    },
+  });
+  const { calls } = start();
+  await settle(600);
+  stop();
+
+  assert.equal(JSON.stringify(calls), JSON.stringify([['openRightbar'], ['focus', 'tab7']]));
+  const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
+  assert.equal(value.expandVia, 'layout.openRightbar');
+});
+
+/**
+ * A collapsed panel slides the whole column out of the viewport while its content
+ * keeps a real box (measured live: x=959 with a 958px-wide window). Size alone
+ * therefore cannot decide visibility, which is what this pins down.
+ */
+test('a carrier box outside the viewport counts as hidden', async () => {
+  const { requests, start, stop } = captureHarness({
+    innerWidth: 958,
+    innerHeight: 1031,
+    webviews: [
+      { title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 430, height: 915, x: 959, y: 116 },
+    ],
+    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+    expanded: false,
+  });
+  const { calls } = start();
+  await settle(600);
+  stop();
+
+  assert.equal(JSON.stringify(calls), JSON.stringify([['toggleExpanded'], ['focus', 'tab7']]));
+  const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
+  assert.equal(value.visible, false, 'an off-viewport box is not visible');
+});
+
+test('prepare-capture reports honestly when no chip carries the page', async () => {
+  const { requests, start, stop } = captureHarness({
+    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 0, height: 0 }],
+    chips: [],
+  });
+  const { calls } = start();
+  await settle(80);
+  stop();
+
+  assert.deepEqual(calls, [], 'nothing to focus without a tab id');
+  const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
+  assert.equal(value.visible, false);
+  assert.equal(value.tabId, null);
 });
 
 test('a failing transport is reported once and retried with a backoff', async () => {

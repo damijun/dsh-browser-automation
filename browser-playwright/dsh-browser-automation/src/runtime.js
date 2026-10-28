@@ -361,43 +361,74 @@ export class Runtime {
     );
   }
 
+  /**
+   * Capture a page to a PNG file.
+   *
+   * Chromium only frames a widget that is laid out and on screen, and a sidebar tab
+   * that is not the visible one sits in a `display:none` cell measuring 0x0 — so a
+   * capture waits forever. The page half therefore reports whether the tab is
+   * already visible (cheap path: the CLI's own screenshot command) and otherwise
+   * brings it to the front, expanding the panel first if needed. Two details make
+   * the slow path work: the first frame after a resize needs a moment, and
+   * Playwright's default 5s deadline is too tight for it, so the capture goes
+   * through Playwright's API with a deadline of our own.
+   *
+   * Per the user's decision, the sidebar is left on the captured tab afterwards.
+   */
   async screenshot(request) {
+    const driver = this.ensureDriver();
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const file = path.join(this.ensureDriver().cli.workdir(), `screenshot-${stamp}.png`);
-    // Chromium can only capture a surface it is compositing: a sidebar tab that is
-    // hidden behind another tab in the same pane has none, and `page.screenshot()`
-    // waits forever for it. Ask the page to bring the tab to the front first, then
-    // give React one commit to actually swap the visible body. This is best-effort
-    // — the tab id is unknown for a claimed page until the page reports it — so the
-    // failure path below still tells the user what to do by hand.
-    const record = this.manager.get(request.pageId);
-    let focusRequested = false;
-    if (record?.tabId && this.bridge?.hasClient()) {
-      focusRequested = await this.bridge
-        .request('focus-tab', { tabId: record.tabId }, { timeoutMs: 4_000 })
-        .then(() => true)
+    const file = path.join(driver.cli.workdir(), `screenshot-${stamp}.png`);
+
+    let plan = { visible: null, tabId: null, expanded: null, expandedNow: false };
+    if (this.bridge?.hasClient()) {
+      plan = await this.bridge
+        .request('prepare-capture', { pageId: request.pageId }, { timeoutMs: 6_000 })
         .catch((error) => {
-          this.log(`could not focus ${record.tabId}: ${error.message}`);
-          return false;
+          this.log(`prepare-capture failed, capturing as-is: ${error.message}`);
+          return plan;
         });
-      if (focusRequested) await sleep(350);
     }
+    // A tab that was just brought to the front (or un-collapsed) needs a frame
+    // before Chromium will hand one to the capture.
+    const settleMs = Number(this.config.screenshotSettleMs ?? 1_200);
+    if (plan.visible === false && plan.tabId && settleMs > 0) await sleep(settleMs);
+
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
+        // Only the CLI command understands snapshot refs, so an element capture
+        // always takes that path — even after focusing, where its 5s deadline is
+        // the only risk. Capturing the whole page is what gets the long deadline.
+        const elementTarget = Boolean(request.target);
         try {
-          await driver.screenshot(
-            request.pageId,
-            { path: file, fullPage: request.fullPage, target: request.target },
-            tab,
-          );
+          if (plan.visible === false && plan.tabId && !elementTarget) {
+            // Playwright's capture path with a deadline that matches a cold frame.
+            await driver.screenshotToFile(
+              request.pageId,
+              { path: file, fullPage: request.fullPage, timeoutMs: 25_000 },
+              tab,
+            );
+          } else {
+            await driver.screenshot(
+              request.pageId,
+              { path: file, fullPage: request.fullPage, target: request.target },
+              tab,
+            );
+          }
         } catch (error) {
           if (/Timeout/i.test(error.message)) {
-            const tried = focusRequested ? ' The plugin already asked DSH to bring it to the front.' : '';
+            const hint =
+              plan.visible === false
+                ? plan.tabId
+                  ? ` The plugin brought the tab to the front (tabId ${plan.tabId}) and still could not capture it` +
+                    (elementTarget ? ', and element captures use the CLI\u2019s fixed 5s deadline' : '') +
+                    '.'
+                  : ' The plugin could not locate this page\u2019s sidebar tab, so it could not bring it to the front.'
+                : '';
             throw new Error(
-              `The browser could not capture this tab (${error.message}). Chromium only captures a surface it is ` +
-                'compositing, and a sidebar tab hidden behind another tab in the same pane has none.' +
-                `${tried} Switch the sidebar to this tab and retry. ` +
+              `The browser could not capture this tab (${error.message}). Chromium only frames a sidebar tab that ` +
+                `is laid out and visible.${hint} Open the sidebar, select this tab, and retry — ` +
                 'browser_snapshot reads the same page without capturing pixels and always works.',
             );
           }

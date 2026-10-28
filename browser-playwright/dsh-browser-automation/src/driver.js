@@ -286,6 +286,10 @@ export class PageDriver {
   }
 
   /**
+   * The CLI's own screenshot command. It understands snapshot refs, but uses
+   * Playwright's default 5s capture deadline, which a tab that was just brought
+   * to the front can exceed. Prefer {@link screenshotToFile} for those.
+   *
    * @param {string} pageId
    * @param {{ path: string, fullPage?: boolean, target?: string }} options
    * @param {ResolvedTab} [target]
@@ -299,6 +303,36 @@ export class PageDriver {
         if (options.target) args.push(options.target);
         const { stdout, stderr } = await this.cli.run(args, { timeoutMs: 60_000 });
         return { path: options.path, output: `${stdout}${stderr}`.trim() };
+      },
+      target,
+    );
+  }
+
+  /**
+   * Capture through Playwright's own API with a deadline we choose.
+   *
+   * `playwright-cli screenshot` hard-codes Playwright's 5s default, and a sidebar
+   * tab that was hidden a moment ago needs longer than that to produce its first
+   * frame. `run-code` runs in the CLI daemon (a Node process), so
+   * `page.screenshot({ path })` writes the file there directly — no bytes travel
+   * through the command output.
+   *
+   * @param {string} pageId
+   * @param {{ path: string, fullPage?: boolean, timeoutMs?: number }} options
+   * @param {ResolvedTab} [target]
+   */
+  async screenshotToFile(pageId, options, target) {
+    const settings = [
+      `path: ${JSON.stringify(options.path)}`,
+      `timeout: ${Number(options.timeoutMs ?? 25_000)}`,
+      ...(options.fullPage ? ['fullPage: true'] : []),
+    ].join(', ');
+    const code = `async page => { await page.screenshot({ ${settings} }); return "saved"; }`;
+    return this.withPage(
+      pageId,
+      async () => {
+        await this.cli.run(['--raw', 'run-code', code], { timeoutMs: 60_000 });
+        return { path: options.path };
       },
       target,
     );

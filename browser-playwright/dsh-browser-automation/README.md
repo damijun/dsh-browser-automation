@@ -186,6 +186,7 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
     command: playwright-cli      # 或绝对路径
     timeoutMs: 20000             # 单次 CLI 调用超时；超时重试一次然后报错
     requestTimeoutMs: 20000      # 等页面桥回答的时间
+    screenshotSettleMs: 1200     # 截图前把隐藏页切到前台后，等首帧的时间
     debug: false                 # true 时用 console.debug 打印桥与 CLI 诊断
 ```
 
@@ -198,10 +199,14 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 - **跨窗口多会话**：`ctx.sidebarRight.openTab` 没有 session 参数，永远作用于"当前屏幕上的会话"。
   同一个窗口里的多个 DSH 会话没问题（靠标记区分，已实测）；两个 DSH 窗口各自开页时，桥只能打开请求时在屏的那个会话的标签页。
 - **`browser_screenshot` 只返回路径**，不内联图片字节（工具返回值必须是 lossless JSON；内联图片需要 attachments 服务）。
-- **截图只能拍侧边栏当前可见的标签页**。Chromium 只捕获它在合成中的 surface，同 pane 里被别的标签页挡住的
-  页没有 surface，`page.screenshot()` 会一直等到 5s 超时。插件若知道该页的侧边栏 `tabId` 会先请页面
-  `focus(tabId)` 再等一下，但这只是尽力而为（`active()` 有时拿不到 id），实测隐藏页仍可能失败 ——
-  所以报错信息直接告诉用户"把该标签页切到前台"。只读内容时用 `browser_snapshot`，它不依赖合成，永远可用。
+- **截图会把目标标签页切到前台**。Chromium 只给"被布局且在视口里"的 widget 出帧，而没被选中的侧边栏标签页
+  所在的 cell 是 `display:none`（0×0），侧边栏收起时整列还被平移到视口外（实测 x=959、窗口宽 958）。
+  所以 `browser_screenshot` 分两条路：
+  - 目标页已经可见 → 直接用 `playwright-cli screenshot`（快，无副作用）；
+  - 否则 → 页面侧按 chip 文本找到 `tabId` → 需要时先展开侧边栏 → `focus(tabId)` → 等 `screenshotSettleMs`（默认 1.2s）
+    让首帧出来 → 用 Playwright API `page.screenshot({ timeout: 25000 })` 落盘。**截完不切回**，侧边栏停在被截的那页。
+  图片尺寸 = 该标签页在侧边栏里的实际尺寸（例如 430×915），不是固定视口。
+  只是读内容时用 `browser_snapshot`，它不依赖合成，永远可用。
 - **`detach` 结束自动化会话**：DSH 与它的标签页毫发无损，但之后再操作会以全新的 attach 视图开始 ——
   已有的 `pageId` 不再解析（实测：detach 后重新 attach，`tab-list` 里看不到原来的 webview 目标），
   需要重新 `browser_open` / `browser_claim`。
@@ -222,16 +227,20 @@ cd dsh-browser-automation
 node --test
 ```
 
-65 个用例，覆盖：
+75 个用例，覆盖：
 
 - `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、零命中/多命中、索引漂移）；
 - 标记脚本（追加、幂等、剥旧标记、页面改标题后补回、更新 `<title>` 的场景）——用 `node:vm` + 假 DOM 真跑；
 - **两种启动模式的约束**：桥不在/从未连上/掉线三种状态都必须报错且**不碰 CLI**（断言没有任何
   `tab-select`/`goto`，也没登记 pageId）；claim 在"看不见页面"、"页面还没进 tab-list"、"可见 URL 带尾斜杠或 hash"
   各种情况下的行为；claim 换标记后旧 pageId 必须注销；
+- **截图的两条路径**：可见页走 CLI 命令、隐藏页走"补 tabId→focus→长超时"；`fullPage` 透传；
+  拿不到 tabId 时老实走普通路径；桥断了仍能走普通路径；
 - **client 半边的 harness**：把真实的 `client.js` 按页面的方式载入，用假 `__ModuleLoader__` + 假
-  `ctx.sidebarRight` 跑 `apply()`，断言 `hello` 用的是文档相对 URL、`open-tab` 只调用一次
-  `openTab`、`focus-tab` 只调 `focus`、失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
+  `ctx.sidebarRight`/`ctx.layout` 跑 `apply()`。断言 `hello` 用文档相对 URL、`open-tab` 只调一次
+  `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/找不到 chip/toggle 抛错"五种情况下的动作序列、
+  **collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、失败只报一次、空轮询不空转。
+  这一层就是"页面里才炸"的那类 bug 的护栏；
 - 工具定义（自实现一遍 `assertSupportedJsonSchema` 子集，避免"装上才发现 schema 非法"）、渲染器、命名、无 `index`/`tab-new`/`targetId`；
   以及"运行时加的字段必须在 output schema 里声明"（这条抓到过两次真 bug）；
 - CliBridge（shim → JS 入口解析、**Electron 里必须换用 PATH 的 node**、argv 不被引号破坏、非零退出、超时、取消、失败信息去掉 Node 栈）；

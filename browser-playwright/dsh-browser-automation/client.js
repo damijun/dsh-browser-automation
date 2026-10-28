@@ -90,6 +90,33 @@ window.__ModuleLoader__.load({
       const sidebar = () => ctx.sidebarRight;
 
       /**
+       * Whether a carrier element is really on screen, and its box.
+       *
+       * Two different things keep Chromium from painting a sidebar page, and they
+       * need different tests:
+       *  - a tab that is not the selected one lives in a `display:none` cell, so it
+       *    measures 0x0;
+       *  - a collapsed panel slides the whole column out of the viewport, but its
+       *    content keeps a real box (measured at x=959 with a 958px-wide window),
+       *    so size alone would wrongly call it visible.
+       *
+       * @param {HTMLElement} view
+       * @returns {{ width: number, height: number } | null}
+       */
+      function onScreen(view) {
+        const rect = view.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) return null;
+        const style = window.getComputedStyle(view);
+        if (style.display === 'none' || style.visibility === 'hidden') return null;
+        const intersects =
+          rect.right > 0 &&
+          rect.bottom > 0 &&
+          rect.left < window.innerWidth &&
+          rect.top < window.innerHeight;
+        return intersects ? rect : null;
+      }
+
+      /**
        * The web page the user is actually looking at.
        *
        * Playwright's "current tab" is its own bookkeeping and has nothing to do
@@ -103,20 +130,14 @@ window.__ModuleLoader__.load({
        */
       function visiblePage() {
         try {
-          const views = [...document.querySelectorAll('webview')];
-          for (const view of views) {
-            const rect = view.getBoundingClientRect();
-            if (rect.width < 1 || rect.height < 1) continue;
-            const style = window.getComputedStyle(view);
-            if (style.display === 'none' || style.visibility === 'hidden') continue;
+          for (const view of document.querySelectorAll('webview')) {
+            if (!onScreen(view)) continue;
             const url = typeof view.getURL === 'function' ? view.getURL() : null;
             const title = typeof view.getTitle === 'function' ? view.getTitle() : null;
             if (url) return { url, title };
           }
-          const frames = [...document.querySelectorAll('iframe[data-sidebar-browser-frame]')];
-          for (const frame of frames) {
-            const rect = frame.getBoundingClientRect();
-            if (rect.width < 1 || rect.height < 1) continue;
+          for (const frame of document.querySelectorAll('iframe[data-sidebar-browser-frame]')) {
+            if (!onScreen(frame)) continue;
             return { url: frame.getAttribute('src') ?? null, title: null };
           }
         } catch (error) {
@@ -215,7 +236,99 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** @param {{ requestId: string, kind: string, url?: string }} command */
+      /**
+       * The carrier `<webview>` showing one page, if this page can see it.
+       *
+       * Desktop renders every sidebar browser tab as a `<webview>` guest whose
+       * `getTitle()` is the guest's `document.title` — which carries the pageId
+       * marker. That makes it the join key between a pageId and a sidebar tab.
+       *
+       * @param {string} pageId
+       */
+      function viewFor(pageId) {
+        try {
+          const views = [...document.querySelectorAll('webview')];
+          return (
+            views.find((view) => String(view.getTitle && view.getTitle()).includes(pageId)) ?? null
+          );
+        } catch (error) {
+          return null;
+        }
+      }
+
+      /**
+       * The sidebar tab id (`tabN`) whose chip shows this page's title.
+       *
+       * The strip renders one chip per tab with `data-sidebar-right-tab="tabN"`,
+       * and a browser chip's label is the observed page title — so the marker in
+       * `document.title` is what connects pageId to the UI's own tab identity.
+       * A collapsed sidebar renders no strip, hence no chips.
+       *
+       * @param {string} pageId
+       */
+      function tabIdFor(pageId) {
+        try {
+          const chips = [...document.querySelectorAll('[data-sidebar-right-tab]')];
+          const chip = chips.find((element) => (element.textContent || '').includes(pageId));
+          return chip ? chip.getAttribute('data-sidebar-right-tab') : null;
+        } catch (error) {
+          return null;
+        }
+      }
+
+      /**
+       * Make one page capturable.
+       *
+       * Chromium only frames a widget that is laid out and on screen: a sidebar tab
+       * that is not the visible one sits in a `display:none` cell and measures 0x0,
+       * so `page.screenshot()` waits forever. The fix is to bring that tab to the
+       * front (expanding the panel first if it is collapsed), and the Host then
+       * captures with a generous timeout because the first frame after a resize
+       * takes a moment.
+       *
+       * @param {string} pageId
+       */
+      async function prepareCapture(pageId) {
+        const service = sidebar();
+        const view = viewFor(pageId);
+        const visible = view ? Boolean(onScreen(view)) : false;
+        const expanded = service && typeof service.isExpanded === 'function' ? service.isExpanded() : null;
+        if (visible) return { visible: true, tabId: tabIdFor(pageId), expanded, expandedNow: false };
+
+        let expandedNow = false;
+        let expandVia = null;
+        let expandError = null;
+        if (service && expanded === false) {
+          // Two ways to open the column: the sidebar controller's own toggle, and
+          // the layout action the panel control uses. Try them in that order and
+          // report which one worked, because a silently failed expand makes the
+          // whole capture look like a Chromium problem.
+          try {
+            service.toggleExpanded();
+            expandedNow = true;
+            expandVia = 'sidebarRight.toggleExpanded';
+          } catch (error) {
+            expandError = error && error.message ? error.message : String(error);
+          }
+          if (!expandedNow) {
+            try {
+              ctx.layout.openRightbar(false, false);
+              expandedNow = true;
+              expandVia = 'layout.openRightbar';
+            } catch (error) {
+              expandError = `${expandError ?? ''} / ${error && error.message ? error.message : String(error)}`.trim();
+            }
+          }
+          // The strip mounts with the panel; chips do not exist before that.
+          if (expandedNow) await sleep(350);
+        }
+        const tabId = tabIdFor(pageId);
+        if (!tabId) return { visible: false, tabId: null, expanded, expandedNow, expandVia, expandError };
+        service.focus(tabId);
+        return { visible: false, tabId, expanded, expandedNow, expandVia, expandError };
+      }
+
+      /** @param {{ requestId: string, kind: string, url?: string, pageId?: string }} command */
       async function handle(command) {
         if (command.kind === 'open-tab') {
           const value = await openTab(command.url);
@@ -226,19 +339,9 @@ window.__ModuleLoader__.load({
           await call('result', { requestId: command.requestId, ok: true, value: capabilities() });
           return;
         }
-        if (command.kind === 'focus-tab') {
-          // A hidden sidebar tab has no compositor surface, so a screenshot of it
-          // times out. Bringing it to the front is the only way to capture it, and
-          // it is visible to the user (it changes which tab is showing).
-          const service = sidebar();
-          if (!service) throw new Error('the sidebar-right client service is not available in this page');
-          if (!command.tabId) throw new Error('focus-tab needs a tabId');
-          service.focus(command.tabId);
-          await call('result', {
-            requestId: command.requestId,
-            ok: true,
-            value: { focused: true, tabId: command.tabId },
-          });
+        if (command.kind === 'prepare-capture') {
+          const value = await prepareCapture(String(command.pageId ?? ''));
+          await call('result', { requestId: command.requestId, ok: true, value });
           return;
         }
         await call('result', {
@@ -299,7 +402,10 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['sidebarRight'],
+      // `layout` is only needed to open a collapsed column for a screenshot, but
+      // it is a hard inject because a missing service would silently break that
+      // fallback path instead of failing loudly.
+      inject: ['sidebarRight', 'layout'],
       apply,
     };
   },
