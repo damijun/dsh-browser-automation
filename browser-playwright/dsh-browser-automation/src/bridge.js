@@ -1,0 +1,258 @@
+import { randomUUID } from 'node:crypto';
+
+/**
+ * Host half of the Host <-> Client channel.
+ *
+ * The plugin needs one thing the Host cannot do for itself: open a sidebar tab.
+ * `ctx.sidebarRight.openTab()` exists only in the page, and this DSH version
+ * exposes no Host->Client call path for a third-party bundle (forwarded events
+ * are a build-time allowlist inside `@deepseek-ai/dsh-api-remotes`). So the two
+ * halves meet over the app's own authenticated RPC channel
+ * (`ctx.connection.rpc.handle` on this side, `ctx.connection.rpc.call` in the
+ * page), which works unchanged in the Web app and in Desktop's IPC/scheme
+ * carrier:
+ *
+ *   endpoint `hello`   announce a page and report its capabilities
+ *   endpoint `poll`    long-poll for one queued command
+ *   endpoint `result`  settle the pending request
+ *   endpoint `status`  diagnostics (surfaced by browser_status)
+ *
+ * The channel carries no page content and no credentials of its own; the
+ * connection layer authenticates every call and only owner peers reach it.
+ */
+export class Bridge {
+  /**
+   * @param {object} [options]
+   * @param {number} [options.requestTimeoutMs] how long a tool waits for the page to answer
+   * @param {number} [options.pollTimeoutMs]    how long one poll is held open
+   * @param {(message: string) => void} [options.log]
+   */
+  constructor(options = {}) {
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
+    this.pollTimeoutMs = options.pollTimeoutMs ?? 15_000;
+    this.log = options.log ?? (() => {});
+    /** @type {Map<string, ClientRecord>} */
+    this.clients = new Map();
+    /** @type {Map<string, Pending>} */
+    this.pending = new Map();
+    /** @type {Command[]} */
+    this.queue = [];
+    /** @type {Waiter[]} */
+    this.waiters = [];
+    this.disposed = false;
+  }
+
+  /**
+   * @param {string} clientId
+   * @param {Record<string, unknown>} [info]
+   */
+  hello(clientId, info = {}) {
+    if (!clientId) throw new Error('bridge: hello requires a clientId');
+    const record = this.clients.get(clientId) ?? { clientId, seenAt: 0, capabilities: {} };
+    record.seenAt = Date.now();
+    record.capabilities = { ...record.capabilities, ...info };
+    this.clients.set(clientId, record);
+    this.log(`client ${clientId.slice(0, 8)} connected (${Object.keys(info).join(', ') || 'no capabilities'})`);
+    return { ok: true, pollTimeoutMs: this.pollTimeoutMs };
+  }
+
+  /** Whether a page has announced itself recently. */
+  hasClient() {
+    const cutoff = Date.now() - 60_000;
+    for (const record of this.clients.values()) if (record.seenAt >= cutoff) return true;
+    return false;
+  }
+
+  /**
+   * Hand the next command to one polling client, holding the request open until
+   * a command arrives, `waitMs` elapses, or the caller disconnects. Holding a
+   * poll open is what makes this a push channel instead of a polling loop.
+   *
+   * @param {string} clientId
+   * @param {number} [waitMs]
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<Command | null>}
+   */
+  nextCommand(clientId, waitMs = this.pollTimeoutMs, signal) {
+    if (clientId) {
+      const record = this.clients.get(clientId);
+      if (record) record.seenAt = Date.now();
+      else this.hello(clientId, {});
+    }
+    const queued = this.queue.shift();
+    if (queued) return Promise.resolve(queued);
+    if (this.disposed) return Promise.resolve(null);
+    if (signal?.aborted) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const waiter = { clientId, resolve, timer: undefined };
+      const settle = (command) => {
+        if (waiter.done) return;
+        waiter.done = true;
+        clearTimeout(waiter.timer);
+        signal?.removeEventListener?.('abort', onAbort);
+        this.waiters = this.waiters.filter((entry) => entry !== waiter);
+        resolve(command);
+      };
+      const onAbort = () => settle(null);
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+      waiter.timer = setTimeout(() => settle(null), Math.max(0, Math.min(waitMs, 60_000)));
+      if (typeof waiter.timer.unref === 'function') waiter.timer.unref();
+      this.waiters.push(waiter);
+    });
+  }
+
+  /**
+   * Settle the request a command belongs to.
+   *
+   * @param {{ requestId?: string, ok?: boolean, value?: unknown, error?: string }} payload
+   */
+  submitResult(payload) {
+    const requestId = payload?.requestId;
+    if (!requestId) return { ok: false, error: 'bridge: result requires a requestId' };
+    const pending = this.pending.get(requestId);
+    if (!pending) return { ok: false, error: `bridge: no pending request ${requestId}` };
+    this.pending.delete(requestId);
+    clearTimeout(pending.timer);
+    if (payload.ok === false) {
+      pending.reject(new Error(payload.error || 'The DSH page reported a failure.'));
+    } else {
+      pending.resolve(payload.value);
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Queue one command and wait for the page to settle it.
+   *
+   * @param {string} kind
+   * @param {Record<string, unknown>} [payload]
+   * @param {{ timeoutMs?: number }} [options]
+   * @returns {Promise<unknown>}
+   */
+  request(kind, payload = {}, options = {}) {
+    if (this.disposed) return Promise.reject(new Error('bridge: the plugin is shutting down'));
+    if (!this.hasClient()) {
+      return Promise.reject(
+        new Error(
+          'No DSH page is connected to the browser bridge, so a sidebar tab cannot be opened. ' +
+            'Reload the DSH window (or bring the app back online) and retry.',
+        ),
+      );
+    }
+    const requestId = randomUUID();
+    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
+    const command = { requestId, kind, ...payload, queuedAt: Date.now() };
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        this.queue = this.queue.filter((entry) => entry.requestId !== requestId);
+        reject(new Error(`The DSH page did not answer "${kind}" within ${Math.round(timeoutMs / 1000)}s.`));
+      }, timeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
+      this.pending.set(requestId, { resolve, reject, timer });
+      const waiter = this.waiters.shift();
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        waiter.resolve(command);
+      } else {
+        this.queue.push(command);
+      }
+    });
+  }
+
+  /** Wake every held poll (plugin unload). */
+  dispose() {
+    this.disposed = true;
+    for (const waiter of this.waiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(null);
+    }
+    this.waiters = [];
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('bridge: the plugin unloaded before the page answered'));
+    }
+    this.pending.clear();
+    this.queue = [];
+  }
+
+  /** Diagnostics for `browser_status`. */
+  snapshot() {
+    return {
+      clients: [...this.clients.values()].map((record) => ({
+        clientId: record.clientId.slice(0, 8),
+        seenAgoMs: Date.now() - record.seenAt,
+        capabilities: record.capabilities,
+      })),
+      pendingRequests: this.pending.size,
+      queuedCommands: this.queue.length,
+      heldPolls: this.waiters.length,
+    };
+  }
+}
+
+/**
+ * @typedef {object} ClientRecord
+ * @property {string} clientId
+ * @property {number} seenAt
+ * @property {Record<string, unknown>} capabilities
+ */
+
+/**
+ * @typedef {object} Pending
+ * @property {(value: unknown) => void} resolve
+ * @property {(error: Error) => void} reject
+ * @property {ReturnType<typeof setTimeout>} timer
+ */
+
+/**
+ * @typedef {object} Command
+ * @property {string} requestId
+ * @property {string} kind
+ * @property {number} queuedAt
+ * @property {Record<string, unknown>} [payload]
+ */
+
+/**
+ * @typedef {object} Waiter
+ * @property {string} clientId
+ * @property {(command: Command | null) => void} resolve
+ * @property {ReturnType<typeof setTimeout>} timer
+ */
+
+/**
+ * Read a JSON body from a node:http request, bounded.
+ *
+ * @param {import('node:http').IncomingMessage} request
+ * @param {number} [maxBytes]
+ * @returns {Promise<unknown>}
+ */
+export function readJsonBody(request, maxBytes = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    /** @type {Buffer[]} */
+    const chunks = [];
+    let size = 0;
+    request.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(new Error('bridge: request body too large'));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on('error', reject);
+    request.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8').trim();
+      if (!text) {
+        resolve(undefined);
+        return;
+      }
+      try {
+        resolve(JSON.parse(text));
+      } catch (error) {
+        reject(new Error(`bridge: malformed JSON body (${error.message})`));
+      }
+    });
+  });
+}

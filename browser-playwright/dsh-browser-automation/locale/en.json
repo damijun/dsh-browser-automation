@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "title": "Sidebar Browser Automation",
+    "description": "Drive the DSH right-sidebar browser through playwright-cli: open, claim and operate pages, with a per-session page handle."
+  },
+  "bridge": {
+    "connected": "Connected to the DSH host bridge",
+    "unavailable": "The host bridge is unavailable"
+  }
+}

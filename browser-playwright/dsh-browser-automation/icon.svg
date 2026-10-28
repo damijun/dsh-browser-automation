@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Sidebar browser automation">
+  <rect x="4" y="8" width="56" height="48" rx="8" fill="#1f6feb"/>
+  <rect x="4" y="8" width="56" height="12" rx="8" fill="#1550b8"/>
+  <rect x="4" y="16" width="56" height="4" fill="#1550b8"/>
+  <circle cx="11" cy="14" r="2" fill="#d7e6ff"/>
+  <circle cx="18" cy="14" r="2" fill="#d7e6ff"/>
+  <circle cx="25" cy="14" r="2" fill="#d7e6ff"/>
+  <path d="M32 26c8.3 0 15 5.6 15 12.5 0 2.6-1 5-2.8 7l2.2 5.5-5.6-2.6c-2.5 1.7-5.6 2.6-8.8 2.6-8.3 0-15-5.6-15-12.5S23.7 26 32 26z" fill="#ffffff"/>
+  <path d="M29.5 33.2v10.6l8.8-5.3-8.8-5.3z" fill="#1f6feb"/>
+</svg>

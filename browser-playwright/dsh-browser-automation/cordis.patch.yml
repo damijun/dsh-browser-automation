@@ -1,0 +1,22 @@
+# Right-sidebar browser automation for DSH Desktop.
+#
+# The row mounts both halves: index.js (tools + playwright-cli + the page bridge)
+# and client.js (declared in package.json under dsh.client), which owns
+# ctx.sidebarRight.openTab.
+- insert:
+    - id: browser-automation
+      name: '@local/dsh-browser-automation'
+      config:
+        # playwright-cli session name (`-s=`). One session is shared by every
+        # DSH session; page markers, not the CLI session, separate them.
+        session: dsh
+        # CDP endpoint DSH Desktop was started with (--remote-debugging-port=9222).
+        cdpUrl: http://127.0.0.1:9222
+        # CLI command or absolute path. Defaults to `playwright-cli` on PATH.
+        command: playwright-cli
+        # Per-call timeout for one playwright-cli invocation, milliseconds.
+        timeoutMs: 20000
+        # How long a tool waits for the DSH page to answer a bridge request.
+        requestTimeoutMs: 20000
+        # Set true to print bridge/CLI diagnostics with console.debug.
+        debug: false

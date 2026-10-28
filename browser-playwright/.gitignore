@@ -1,0 +1,9 @@
+# Scratch / generated artifacts
+_*.mjs
+.playwright-cli/
+node_modules/
+
+# Local Playwright CLI output (snapshots, screenshots, traces)
+page-*.yml
+page-*.png
+*.log

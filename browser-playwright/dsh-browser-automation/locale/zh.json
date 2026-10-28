@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "title": "侧边栏浏览器自动化",
+    "description": "通过 playwright-cli 驱动 DSH 右侧边栏浏览器：按会话打开、接管并操作页面，每个页面有稳定的 pageId。"
+  },
+  "bridge": {
+    "connected": "已连接 DSH 宿主桥",
+    "unavailable": "宿主桥不可用"
+  }
+}
