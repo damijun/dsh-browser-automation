@@ -39,7 +39,7 @@ export function apply(ctx, config) {
   const settings = {
     session: 'dsh',
     command: 'playwright-cli',
-    nodePath: undefined,
+    nodePath: 'auto',
     cdpUrl: 'http://127.0.0.1:9222',
     timeoutMs: 20_000,
     requestTimeoutMs: 20_000,
@@ -226,3 +226,4 @@ function reply(response, status, body) {
   response.writeHead(status, { 'content-length': Buffer.byteLength(text) });
   response.end(text);
 }
+

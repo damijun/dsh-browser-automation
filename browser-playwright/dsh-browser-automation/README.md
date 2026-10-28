@@ -184,11 +184,26 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
     session: dsh                 # playwright-cli -s=；所有 DSH 会话共用一个
     cdpUrl: http://127.0.0.1:9222
     command: playwright-cli      # 或绝对路径
+    nodePath: auto               # 见下：哪个 node 去跑 CLI 的 .js 入口
     timeoutMs: 20000             # 单次 CLI 调用超时；超时重试一次然后报错
     requestTimeoutMs: 20000      # 等页面桥回答的时间
     screenshotSettleMs: 1200     # 截图前把隐藏页切到前台后，等首帧的时间
     debug: false                 # true 时用 console.debug 打印桥与 CLI 诊断
 ```
+
+### `nodePath`：用哪个 Node 跑 CLI
+
+Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不是 node，所以跑
+`playwright-cli.js` 必须显式挑一个真正的 node。三种取值：
+
+| 值 | 顺序 | 适合 |
+|---|---|---|
+| `auto`（默认） | **DSH 自带 node**（`$DSH_HOME/dsh-runtimes/*/dependencies/node/bin/node.exe`）→ PATH → `ELECTRON_RUN_AS_NODE` 兜底 | 推荐。自带的那份一定存在、版本由 DSH 锁定，**不依赖桌面快捷方式继承的 PATH**（装完 Node 不重新登录就不在 PATH 里，这是最容易踩的坑） |
+| `path` | 只用 PATH 上的 node；完全忽略自带那份 | 想跟全局 npm 安装环境严格一致时 |
+| 绝对路径 | 就用这个文件；不存在直接报错 | 多版本共存、要固定某个 node 时 |
+
+解析结果会出现在 `browser_status` 的 `cli.resolved` 里，带 `source`
+（`dsh-runtime` / `path` / `process` / `config` / `electron-run-as-node`），一眼能看出这次用的是哪个。
 
 截图和 playwright-cli 的快照文件落在 `%TEMP%\dsh-browser-automation\`，不污染工作区。
 
@@ -271,6 +286,7 @@ node --test
 | T10 解析单测 | ✅ 含 `[]()` 标题、`(current)`、多命中 |
 | `browser_status.modes` | ✅ 实测 `{open:true, claim:false}`（无可见浏览器页时 claim 明确不可用），claim 随之给出"先展开侧边栏"的报错 |
 | `browser_close` 真机 | ✅ 关掉后侧边栏 chip 真的少一个（tab48 消失）、webview 从 2 个变 1 个、CLI 视图同步变 2 行，**没有留下"页面加载失败"空壳**；被关的 pageId 立刻 `PAGE_NOT_FOUND`，另一页照常工作 |
+| `nodePath: auto` 真机 | ✅ `browser_status.cli.resolved.source = dsh-runtime`，用的是 `~/.dsh/dsh-runtimes/dsh-primary-runtime/.../node.exe`（v24.21.0）；新起的 CLI daemon 进程确实来自该路径，开页/列页正常 |
 
 ---
 

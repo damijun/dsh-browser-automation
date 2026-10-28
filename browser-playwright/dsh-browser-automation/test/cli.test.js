@@ -40,24 +40,95 @@ test('under an Electron host the interpreter is a node binary from PATH, with an
     Object.defineProperty(process.versions, 'electron', { value: '39.0.0', configurable: true });
 
     // A PATH that holds node must yield that node, with no env override.
-    const withNode = resolveNode({ env: { PATH: path.dirname(process.execPath) } });
+    const withNode = resolveNode({ env: { PATH: path.dirname(process.execPath), DSH_HOME: path.join(scratch, 'nope') } });
     assert.match(withNode.file, /[\\/]node(\.exe)?$/i);
     assert.equal(withNode.env, undefined);
+    assert.equal(withNode.source, 'path');
 
     // No node anywhere: the Electron binary runs as node only with this env flag.
-    const withoutNode = resolveNode({ env: { PATH: path.join(scratch, 'empty-dir') } });
-    assert.deepEqual(withoutNode, {
-      file: process.execPath,
-      env: { ELECTRON_RUN_AS_NODE: '1' },
-    });
+    const withoutNode = resolveNode({ env: { PATH: path.join(scratch, 'empty-dir'), DSH_HOME: path.join(scratch, 'nope') } });
+    assert.equal(withoutNode.file, process.execPath);
+    assert.deepEqual(withoutNode.env, { ELECTRON_RUN_AS_NODE: '1' });
+    assert.equal(withoutNode.source, 'electron-run-as-node');
 
     // A plain Node host always runs the entry itself, regardless of PATH.
     delete process.versions.electron;
-    assert.deepEqual(resolveNode({ env: { PATH: '' } }), { file: process.execPath });
+    assert.equal(resolveNode({ env: { PATH: '', DSH_HOME: path.join(scratch, 'nope') } }).file, process.execPath);
+    assert.equal(resolveNode({ env: { PATH: '', DSH_HOME: path.join(scratch, 'nope') } }).source, 'process');
   } finally {
     if (saved === undefined) delete process.versions.electron;
     else Object.defineProperty(process.versions, 'electron', { value: saved, configurable: true });
   }
+});
+
+/**
+ * DSH ships its own Node under `$DSH_HOME/dsh-runtimes/<runtime>/dependencies/node`.
+ * Preferring it removes the plugin's dependency on the PATH a desktop shortcut
+ * inherited from Explorer — a Node installed after the session started is not on
+ * that PATH, and the bundled copy is version-pinned by DSH itself.
+ */
+function fakeDshHome() {
+  const home = path.join(scratch, 'dsh-home');
+  const file = path.join(
+    home,
+    'dsh-runtimes',
+    'dsh-primary-runtime',
+    'dependencies',
+    'node',
+    'bin',
+    'node.exe',
+  );
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, '', 'utf8');
+  return { home, file };
+}
+
+test('auto prefers the node DSH ships over the one on PATH', () => {
+  const saved = process.versions.electron;
+  try {
+    Object.defineProperty(process.versions, 'electron', { value: '39.0.0', configurable: true });
+    const { home, file } = fakeDshHome();
+    const resolved = resolveNode({ explicit: 'auto', env: { DSH_HOME: home, PATH: path.dirname(process.execPath) } });
+    assert.equal(resolved.file, file);
+    assert.equal(resolved.source, 'dsh-runtime');
+    assert.equal(resolved.env, undefined, 'no ELECTRON_RUN_AS_NODE needed for a real node');
+  } finally {
+    if (saved === undefined) delete process.versions.electron;
+    else Object.defineProperty(process.versions, 'electron', { value: saved, configurable: true });
+  }
+});
+
+test('auto falls back to PATH when the DSH runtime is not there, and "path" skips it', () => {
+  const saved = process.versions.electron;
+  try {
+    Object.defineProperty(process.versions, 'electron', { value: '39.0.0', configurable: true });
+    const { home } = fakeDshHome();
+    const nodeOnPath = path.dirname(process.execPath);
+
+    // A DSH_HOME without the runtime layout behaves as if it were absent.
+    const noRuntime = resolveNode({ explicit: 'auto', env: { DSH_HOME: path.join(scratch, 'nope'), PATH: nodeOnPath } });
+    assert.equal(noRuntime.source, 'path');
+
+    // 'path' mode must ignore the bundled copy even when it exists.
+    const pathOnly = resolveNode({ explicit: 'path', env: { DSH_HOME: home, PATH: nodeOnPath } });
+    assert.equal(pathOnly.source, 'path');
+    assert.notEqual(pathOnly.file, path.join(home, 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'node', 'bin', 'node.exe'));
+  } finally {
+    if (saved === undefined) delete process.versions.electron;
+    else Object.defineProperty(process.versions, 'electron', { value: saved, configurable: true });
+  }
+});
+
+test('an explicit node path is used verbatim and reported as config', () => {
+  const resolved = resolveNode({ explicit: process.execPath });
+  assert.equal(resolved.file, process.execPath);
+  assert.equal(resolved.source, 'config');
+});
+
+test('the resolved plan reports where the node came from', () => {
+  const plan = resolveCli({ command: 'playwright-cli' });
+  assert.ok(['process', 'dsh-runtime', 'path', 'config', 'electron-run-as-node'].includes(plan.nodeSource));
+  assert.match(plan.prefix[0], /playwright-cli\.js$/);
 });
 
 test('an explicit nodePath wins, and a wrong one fails loudly', () => {
@@ -161,3 +232,5 @@ test('an aborted call stops the child immediately', async () => {
   setTimeout(() => controller.abort(), 100);
   await assert.rejects(() => pending, (error) => error.code === 'CLI_ABORTED');
 });
+
+

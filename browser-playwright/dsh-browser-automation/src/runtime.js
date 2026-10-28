@@ -592,7 +592,15 @@ export class Runtime {
         includeUnclaimed: true,
       });
       const resolved = this.cli?.plan;
-      base.cli.resolved = resolved ? { file: resolved.file, entry: resolved.prefix.join(' ') } : null;
+      base.cli.resolved = resolved
+        ? {
+            // `source` says which of the four resolvers won: config, dsh-runtime,
+            // path, or plain process (a non-Electron host).
+            file: resolved.file,
+            source: resolved.nodeSource ?? null,
+            entry: resolved.prefix.join(' '),
+          }
+        : null;
     } catch (error) {
       base.attached = false;
       base.note = error.message;

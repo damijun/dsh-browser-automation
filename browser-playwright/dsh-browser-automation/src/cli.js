@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -70,34 +70,94 @@ function nodeEntryFromShim(shim) {
 }
 
 /**
+ * The Node that ships inside DSH itself.
+ *
+ * DSH installs a runtime under `$DSH_HOME/dsh-runtimes/<runtime>/dependencies/node`,
+ * and `DSH_HOME` is exported into every shell the Harness runs. That copy is the
+ * most reliable interpreter for our CLI: it exists because DSH was installed, it
+ * is version-pinned, and it does not depend on the PATH a desktop shortcut
+ * inherited from Explorer (a Node installed after the desktop session started is
+ * not on that PATH until the user signs out).
+ *
+ * Layout is an implementation detail, so a miss simply falls through to PATH.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string | undefined}
+ */
+export function dshRuntimeNode(env = process.env) {
+  // `DSH_HOME` is exported into shell subprocesses, not necessarily into the Host
+  // process that runs this plugin, so fall back to DSH's default location.
+  const home = env.DSH_HOME || path.join(os.homedir(), '.dsh');
+  const root = path.join(home, 'dsh-runtimes');
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+  // Prefer the primary runtime by name so the choice is deterministic when a
+  // profile has more than one.
+  const names = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((a, b) => Number(b.includes('primary')) - Number(a.includes('primary')) || a.localeCompare(b));
+  const layouts = [
+    ['dependencies', 'node', 'bin', 'node.exe'],
+    ['dependencies', 'node', 'node.exe'],
+    ['dependencies', 'node', 'bin', 'node'],
+  ];
+  for (const name of names) {
+    for (const layout of layouts) {
+      const candidate = path.join(root, name, ...layout);
+      if (isFile(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Which Node should run the CLI's JavaScript entry.
  *
  * This plugin runs inside the DSH Desktop Host, which is Electron: there
  * `process.execPath` is `DeepSeek Harness.exe`, not `node`. Handing a `.js` entry
  * to that binary makes Electron parse the argv itself, and the CLI's own daemon
- * child then dies with "too many arguments". So a real `node` from PATH wins;
+ * child then dies with "too many arguments". So a real node wins;
  * `ELECTRON_RUN_AS_NODE` is the last resort.
  *
+ * `nodePath` accepts three forms:
+ *  - `'auto'` (default) or unset: DSH's own runtime node, then PATH, then Electron
+ *  - `'path'`: PATH only (skip the bundled copy)
+ *  - an absolute path: exactly that binary
+ *
  * @param {{ explicit?: string, env?: NodeJS.ProcessEnv }} [options]
- * @returns {{ file: string, env?: Record<string, string> }}
+ * @returns {{ file: string, source: string, env?: Record<string, string> }}
  */
 export function resolveNode(options = {}) {
   const { explicit, env = process.env } = options;
-  if (explicit) {
-    if (!isFile(explicit)) throw new CliUnavailableError(`Configured nodePath does not exist: ${explicit}`);
-    return { file: explicit };
+  const mode = explicit ?? 'auto';
+  const usePathOnly = mode === 'path';
+  if (mode !== 'auto' && !usePathOnly) {
+    if (!isFile(mode)) throw new CliUnavailableError(`Configured nodePath does not exist: ${mode}`);
+    return { file: mode, source: 'config' };
   }
-  if (process.versions?.electron === undefined) return { file: process.execPath };
+
+  const electron = process.versions?.electron !== undefined;
+  if (!usePathOnly && electron) {
+    const bundled = dshRuntimeNode(env);
+    if (bundled) return { file: bundled, source: 'dsh-runtime' };
+  }
+  // A plain Node host is already the interpreter it needs.
+  if (!electron) return { file: process.execPath, source: 'process' };
 
   const win = process.platform === 'win32';
   const names = win ? ['node.exe', 'node'] : ['node'];
   for (const directory of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
     for (const name of names) {
       const candidate = path.join(directory, name);
-      if (isFile(candidate)) return { file: candidate };
+      if (isFile(candidate)) return { file: candidate, source: 'path' };
     }
   }
-  return { file: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } };
+  return { file: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' }, source: 'electron-run-as-node' };
 }
 
 /**
@@ -105,24 +165,30 @@ export function resolveNode(options = {}) {
  *
  * @param {object} options
  * @param {string} options.command  configured command name or path
- * @param {string} [options.nodePath] interpreter for the resolved `.js` entry
+ * @param {string} [options.nodePath] interpreter for the resolved `.js` entry:
+ *   `'auto'` (default), `'path'`, or an absolute path
  * @param {NodeJS.ProcessEnv} [options.env]
- * @returns {{ file: string, prefix: string[], shim?: string, env?: Record<string, string> }}
+ * @returns {{ file: string, prefix: string[], shim?: string, env?: Record<string, string>, nodeSource?: string }}
  */
 export function resolveCli(options) {
   const { command, nodePath, env = process.env } = options;
   if (!command) throw new CliUnavailableError('No playwright-cli command configured.');
   const node = () => resolveNode({ explicit: nodePath, env });
+  /** @param {{ readonly prefix: string[], readonly shim?: string }} rest */
+  const withNode = (rest) => {
+    const resolved = node();
+    return { ...resolved, ...rest, nodeSource: resolved.source };
+  };
 
   // 1. An explicit path: a JS entry, a shim, or a real executable.
   if (command.includes('/') || command.includes('\\') || isFile(command)) {
     if (/\.c?js$/i.test(command)) {
       if (!isFile(command)) throw new CliUnavailableError(`playwright-cli entry not found at ${command}.`);
-      return { ...node(), prefix: [command] };
+      return withNode({ prefix: [command] });
     }
     if (/\.(cmd|bat|ps1)$/i.test(command)) {
       const entry = nodeEntryFromShim(command);
-      if (entry) return { ...node(), prefix: [entry], shim: command };
+      if (entry) return withNode({ prefix: [entry], shim: command });
       if (!isFile(command)) throw new CliUnavailableError(`playwright-cli shim not found at ${command}.`);
       return { file: command, prefix: [], shim: command };
     }
@@ -143,7 +209,7 @@ export function resolveCli(options) {
       if (!isFile(candidate)) continue;
       if (/\.(cmd|bat|ps1)$/i.test(candidate)) {
         const entry = nodeEntryFromShim(candidate);
-        if (entry) return { ...node(), prefix: [entry], shim: candidate };
+        if (entry) return withNode({ prefix: [entry], shim: candidate });
         continue;
       }
       if (win && !extensions.some((ext) => candidate.toLowerCase().endsWith(ext.toLowerCase()))) {
@@ -198,7 +264,7 @@ export class CliBridge {
     if (!this.plan) {
       this.plan = resolveCli({ command: this.command, nodePath: this.nodePath });
       const entry = this.plan.prefix.length > 0 ? ` ${this.plan.prefix.join(' ')}` : '';
-      this.log(`playwright-cli resolved to ${this.plan.file}${entry}`);
+      this.log(`playwright-cli resolved to ${this.plan.file}${entry} (node from ${this.plan.nodeSource ?? 'unknown'})`);
     }
     return this.plan;
   }
@@ -395,3 +461,5 @@ export function describeFailure(args, code, signal, stdout, stderr) {
   const detail = interesting && interesting.trim() !== '' ? interesting.trim() : '';
   return `playwright-cli ${command} ${reason}${detail ? `: ${detail}` : '.'}`;
 }
+
+

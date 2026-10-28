@@ -14,9 +14,18 @@
         cdpUrl: http://127.0.0.1:9222
         # CLI command or absolute path. Defaults to `playwright-cli` on PATH.
         command: playwright-cli
+        # Which Node runs the CLI's JavaScript entry (the Host is Electron, so its
+        # own execPath is not node):
+        #   auto  -> DSH's bundled runtime node, then PATH, then ELECTRON_RUN_AS_NODE
+        #   path  -> PATH only
+        #   <absolute path> -> exactly that binary
+        nodePath: auto
         # Per-call timeout for one playwright-cli invocation, milliseconds.
         timeoutMs: 20000
         # How long a tool waits for the DSH page to answer a bridge request.
         requestTimeoutMs: 20000
+        # How long to wait for a first frame after bringing a tab to the front
+        # for a screenshot, milliseconds.
+        screenshotSettleMs: 1200
         # Set true to print bridge/CLI diagnostics with console.debug.
         debug: false
