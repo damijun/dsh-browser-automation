@@ -259,7 +259,7 @@ async function serve({ request, response, runtime, bridge, settings, log, config
         // one this instance booted with.
         //
         // A write only reaches the profile patch; the running row keeps its booted
-        // values until the Loader re-applies it (which needs a re-enable or a restart).
+        // values until the Loader re-applies it (a restart).
         // Reporting the booted copy made the card snap back to the old value after every
         // save, so the base here is the patch truth: schema/bundle values for this row
         // (the booted copy is the fallback for keys the layers do not mention) with the
@@ -304,7 +304,14 @@ async function serve({ request, response, runtime, bridge, settings, log, config
         const values = composeConfigValues({ base: runtime.config?.effective, inherited, override: overrides });
         reply(response, 200, {
           ok: true,
-          value: { values, packageName: PACKAGE_NAME, rowId: ROW_ID, editable: Boolean(row), reason, overrides },
+          value: {
+            values,
+            packageName: PACKAGE_NAME,
+            rowId: ROW_ID,
+            editable: Boolean(row),
+            reason,
+            overrides,
+          },
         });
         return;
       }
@@ -420,6 +427,9 @@ function reply(response, status, body) {
   response.writeHead(status, { 'content-length': Buffer.byteLength(text) });
   response.end(text);
 }
+
+
+
 
 
 

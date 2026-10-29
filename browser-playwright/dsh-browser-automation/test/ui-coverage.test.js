@@ -59,5 +59,6 @@ test('both a save and a reset report that a re-enable is needed, briefly', () =>
   assert.match(source, /flashNote\(t\('cfg\.saved'\)\)/);
   assert.match(source, /flashNote\(t\('cfg\.reset'\)\)/);
   assert.match(source, /noteTimer\.current = setTimeout/);
-  assert.match(source, /cfg\.reset': '[^']*Re-enable this plugin/);
+  assert.match(source, /cfg\.reset': '[^']*Restart DSH/);
 });
+

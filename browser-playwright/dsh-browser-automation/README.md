@@ -245,7 +245,11 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 - 改过的项会显示「已覆盖」徽标和「恢复默认」；右下角「保存」把所有改动一次写入；
 - 保存走宿主 `ctx.configEditor.edit()`，也就是**只写 override 层**，`config` 里只出现你真正改过的键。
 - ⚠️ **保存本身不会重载运行中的这一行**（实测：写完 patch 后实例仍跑旧值，`config-set` 返回 200 但 `effective` 未变）。
-  要生效：**重新启用本插件**（插件页的开关）或**重启 DSH**——实测重新启用后新值立刻生效。
+  要生效：**重启 DSH**。
+- **刻意不做热生效**：配置在 `apply()` 里一次性快照，之后不再读。Schemastery 的 volatile 字段本质是
+  "Loader 会 commit 进去的稳定引用"（`createVolatile` / `updateVolatile`），理论上可以做成热更新，
+  但那会让行为在运行中途变化（超时、CLI 会话名、命令路径都会换），排查成本远大于收益。
+  **改配置 = 重启，行为可预测。**
 
 写到 patch 里的形状永远是三段：
 
@@ -298,6 +302,8 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 - **只支持一个 DSH 实例**：daemon 以 `-s=dsh` 命名，两个实例会抢同一个 daemon（各自指向不同 CDP 端口时必然冲突）。
 - **关掉也能用**：`autoAttach: false` 时退回"第一次工具调用才 attach"——那时**已开着的页**属于"已存在"，要重开才能驱动。
 - **它不解决**：本次 attach 之前就开着的页；以及任何中途 `detach` / daemon 被杀之后的旧页（重新 attach 等于新会话）。
+  
+**如果不想开机自动attach:** 在打开网页之前先打开浏览器自动化监控面板,这会attach一次,之后再打开网页就能被 `playwright-cli` 看到了
 
 ### `nodePath`：用哪个 Node 跑 CLI
 
@@ -484,6 +490,7 @@ node --test
 - `files` 只含运行时文件；`docs/` 会一起发出去（`docs/concurrency-fix.md` 是待办规格，可留可去）。
 - 发布前跑 `npm test`（99 用例）。
 - 标题/描述/图标来自 `locale/{en,zh}.json` 与 `icon.svg`（矢量，插件页当封面用）。
+
 
 
 

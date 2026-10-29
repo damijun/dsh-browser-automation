@@ -134,14 +134,14 @@ window.__ModuleLoader__.load({
         'cfg.loading': 'Loading configuration…',
         'cfg.save': 'Save',
         'cfg.saving': 'Saving…',
-        'cfg.saved': 'Written to the profile patch. Re-enable this plugin (or restart DSH) to apply it.',
-        'cfg.reset': 'Reset to default. Re-enable this plugin (or restart DSH) to apply it.',
+        'cfg.saved': 'Written to the profile patch. Restart DSH to apply it.',
+        'cfg.reset': 'Reset to default. Restart DSH to apply it.',
         'cfg.resetField': 'Reset',
         'cfg.readOnly':
           'Read-only: this host does not serve the settings form. Edit cordis.patch.yml in the profile to change these values.',
         'cfg.noService': 'no configForms service',
         'cfg.noForm': 'no form for this row',
-        'cfg.writeHint': 'A save only writes the profile patch - it does not reload this row.',
+        'cfg.writeHint': 'A save only writes the profile patch; restart DSH to apply it.',
         'cfg.path': 'Profile patch: cordis.patch.yml → id: browser-automation',
         'cfg.errNumber': '{key} must be a number.',
         'cfg.field.nodePath': 'Node path',
@@ -152,7 +152,7 @@ window.__ModuleLoader__.load({
         'cfg.field.requestTimeoutMs': 'Bridge timeout (ms)',
         'cfg.field.screenshotSettleMs': 'Screenshot settle (ms)',
         'cfg.field.debug': 'Debug logging',
-        'cfg.subtitle': 'Saved to this profile patch; re-enable the plugin (or restart DSH) to apply.',
+        'cfg.subtitle': 'Saved to this profile patch. Restart DSH to apply it.',
         'cfg.auto': 'Auto',
         'cfg.path': 'PATH',
         'cfg.custom': 'Custom path',
@@ -207,13 +207,13 @@ window.__ModuleLoader__.load({
         'cfg.loading': '正在读取配置…',
         'cfg.save': '保存',
         'cfg.saving': '保存中…',
-        'cfg.saved': '已写入 profile patch。重新启用本插件或重启 DSH 后生效。',
-        'cfg.reset': '已恢复默认值。重新启用本插件或重启 DSH 后生效。',
+        'cfg.saved': '已写入 profile patch。重启 DSH 后生效。',
+        'cfg.reset': '已恢复默认值。重启 DSH 后生效。',
         'cfg.resetField': '恢复默认',
         'cfg.readOnly': '只读：当前宿主没有提供设置表单。要改这些值，请编辑 profile 里的 cordis.patch.yml。',
         'cfg.noService': '没有 configForms 服务',
         'cfg.noForm': '这一行没有可编辑的表单',
-        'cfg.writeHint': '保存本身只写 profile patch，不会重载这一行。',
+        'cfg.writeHint': '保存本身只写 profile patch；重启 DSH 后生效。',
         'cfg.path': 'Profile patch：cordis.patch.yml → id: browser-automation',
         'cfg.errNumber': '{key} 必须是数字。',
         'cfg.field.nodePath': 'Node 路径',
@@ -224,7 +224,7 @@ window.__ModuleLoader__.load({
         'cfg.field.requestTimeoutMs': '桥超时（ms）',
         'cfg.field.screenshotSettleMs': '截图首帧等待（ms）',
         'cfg.field.debug': '调试日志',
-        'cfg.subtitle': '只写入这个 profile 的 patch；要生效需重新启用本插件或重启 DSH。',
+        'cfg.subtitle': '只写入这个 profile 的 patch；重启 DSH 后生效。',
         'cfg.auto': '自动',
         'cfg.path': 'PATH',
         'cfg.custom': '自定义路径',
@@ -621,7 +621,7 @@ window.__ModuleLoader__.load({
         /**
          * Show a short-lived result line ("saved", "reset").
          *
-         * Both are writes to the patch, so both need the same re-enable/restart hint;
+         * Both are writes to the patch, so both need the same restart hint;
          * the text used to stay on screen after a reset, which read as a permanent
          * state rather than a one-off confirmation.
          *
@@ -706,7 +706,7 @@ window.__ModuleLoader__.load({
               });
             }
             // A reset is a write like any other: it lands in the patch and needs the
-            // same re-enable/restart, so it says so instead of staying silent.
+            // same restart, so it says so instead of staying silent.
             flashNote(t('cfg.reset'));
             await load();
           } catch (failure) {
@@ -1318,6 +1318,8 @@ window.__ModuleLoader__.load({
     };
   },
 });
+
+
 
 
 
