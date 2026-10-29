@@ -65,8 +65,88 @@ export function extractPageIds(text) {
  * @param {string} pageId
  * @returns {string} JavaScript source for `playwright-cli eval`
  */
-export function titleMarkerExpression(pageId) {
+/**
+ * The floating "shared with the agent" badge.
+ *
+ * Why in the page rather than on the tab chip: the sidebar's per-tab title slot is
+ * keyed by pane id and only covers panes a plugin registers itself, so the browser
+ * tabs DSH owns have no public decoration hook. The page is the one surface this
+ * plugin fully controls, and an injected node survives every navigation because it is
+ * part of the init script — the same mechanism the title marker uses.
+ *
+ * Two properties matter more than looks:
+ *   - `pointer-events: none`, so it can never eat a click meant for the page;
+ *   - a shadow root plus `all: initial`, so the host page's CSS cannot restyle or hide
+ *     it and it cannot leak styles into the page.
+ */
+export const SHARED_BADGE_ID = '__dsh-ba-shared__';
+
+/**
+ * The badge a controlled page shows, as part of the marker expression.
+ *
+ * `badge: false` keeps the marker (title token) but paints nothing — that is the
+ * `showSharedBadge: false` setting.
+ *
+ * @param {string} pageId
+ * @param {{ badge?: boolean, text?: string }} [options]
+ * @returns {string} JavaScript source for `playwright-cli eval`
+ */
+export function titleMarkerExpression(pageId, options = {}) {
   const id = JSON.stringify(pageId);
+  const badge = options.badge !== false;
+  const text = JSON.stringify(options.text ?? '正在与智能体共享');
+  const badgeScript = badge
+    ? [
+        `  const BADGE_ID = ${JSON.stringify(SHARED_BADGE_ID)};`,
+        `  const BADGE_TEXT = ${text};`,
+        '  let badgeTimer = 0;',
+        '  const dropBadge = () => {',
+        '    try {',
+        '      const node = document.getElementById(BADGE_ID);',
+        '      if (node) node.remove();',
+        '    } catch (error) {}',
+        '  };',
+        '  const paintBadge = () => {',
+        '    try {',
+        '      if (!document.body) return false;',
+        '      if (document.getElementById(BADGE_ID)) return true;',
+        '      const host = document.createElement("div");',
+        '      host.id = BADGE_ID;',
+        '      host.setAttribute("aria-hidden", "true");',
+        '      host.style.cssText = "position:fixed!important;top:12px!important;right:12px!important;" +',
+        '        "z-index:2147483647!important;pointer-events:none!important;contain:layout style!important";',
+        '      const shadow = host.attachShadow({ mode: "open" });',
+        '      const pill = document.createElement("div");',
+        '      pill.style.cssText = "all:initial;display:inline-flex;align-items:center;gap:6px;" +',
+        '        "font:500 12px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#fff;" +',
+        '        "background:rgba(17,24,39,.86);border-radius:999px;padding:4px 12px 4px 9px;" +',
+        '        "box-shadow:0 2px 10px rgba(0,0,0,.28);white-space:nowrap;user-select:none";',
+        '      const dot = document.createElement("span");',
+        '      dot.style.cssText = "all:initial;display:block;width:7px;height:7px;border-radius:50%;" +',
+        '        "background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.28)";',
+        '      const label = document.createElement("span");',
+        '      label.style.cssText = "all:initial;font:inherit;color:#fff";',
+        '      label.textContent = BADGE_TEXT;',
+        '      pill.appendChild(dot);',
+        '      pill.appendChild(label);',
+        '      shadow.appendChild(pill);',
+        '      document.body.appendChild(host);',
+        '      return true;',
+        '    } catch (error) { return false; }',
+        '  };',
+        '  const ensureBadge = () => {',
+        '    if (paintBadge()) return;',
+        '    if (badgeTimer) return;',
+        // An init script can run before <body> exists; retry briefly instead of giving up.
+        '    let tries = 0;',
+        '    badgeTimer = setInterval(() => {',
+        '      if (paintBadge() || ++tries > 40) { clearInterval(badgeTimer); badgeTimer = 0; }',
+        '    }, 50);',
+        '  };',
+        '  ensureBadge();',
+        '  const badgePresent = () => { try { return Boolean(document.getElementById(BADGE_ID)); } catch (error) { return null; } };',
+      ]
+    : ['  const dropBadge = () => {};', '  const badgePresent = () => false;'];
   return [
     '(() => {',
     `  const id = ${id};`,
@@ -81,6 +161,7 @@ export function titleMarkerExpression(pageId) {
     '  };',
     '  tag();',
     '  try { if (window.__dshBrowserAutomation && window.__dshBrowserAutomation.dispose) window.__dshBrowserAutomation.dispose(); } catch (error) {}',
+    ...badgeScript,
     '  let timer = 0;',
     '  const schedule = () => {',
     '    if (timer) return;',
@@ -90,12 +171,12 @@ export function titleMarkerExpression(pageId) {
     '    const observer = new MutationObserver(schedule);',
     '    const target = document.head || document.documentElement;',
     '    if (target) observer.observe(target, { childList: true, subtree: true, characterData: true });',
-    '    window.__dshBrowserAutomation = { pageId: id, dispose: () => { observer.disconnect(); if (timer) clearTimeout(timer); } };',
+    '    window.__dshBrowserAutomation = { pageId: id, dispose: () => { observer.disconnect(); if (timer) clearTimeout(timer); if (badgeTimer) clearInterval(badgeTimer); dropBadge(); } };',
     '  } catch (error) {}',
     // An init script runs before the document has a <title>; keep trying briefly.
     '  let tries = 0;',
-    '  const retry = setInterval(() => { tag(); if (++tries > 40) clearInterval(retry); }, 100);',
-    '  return JSON.stringify({ pageId: id, title: document.title, url: location.href });',
+    '  const retry = setInterval(() => { tag(); ensureBadge(); if (++tries > 40) clearInterval(retry); }, 100);',
+    '  return JSON.stringify({ pageId: id, title: document.title, url: location.href, badge: badgePresent() });',
     '})()',
   ].join('\n');
 }
@@ -110,10 +191,11 @@ export function titleMarkerExpression(pageId) {
  * so the marker is re-applied without spending another round trip per action.
  *
  * @param {string} pageId
+ * @param {{ badge?: boolean, text?: string }} [options]
  * @returns {string} JavaScript for `playwright-cli run-code`
  */
-export function installMarkerCode(pageId) {
-  const script = titleMarkerExpression(pageId);
+export function installMarkerCode(pageId, options = {}) {
+  const script = titleMarkerExpression(pageId, options);
   return `async page => { await page.addInitScript(${JSON.stringify(script)}); return "installed" }`;
 }
 
@@ -128,3 +210,5 @@ export const probeMarkerExpression = [
   '  pageId: window.__dshBrowserAutomation ? window.__dshBrowserAutomation.pageId : null,',
   '}))()',
 ].join('\n');
+
+

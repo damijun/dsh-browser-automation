@@ -73,6 +73,7 @@ export class PageDriver {
    * @param {import('./cli.js').CliBridge} cli
    * @param {object} options
    * @param {string} options.cdpUrl
+   * @param {{ badge?: boolean }} [options.marker] page marker/badge defaults
    * @param {(message: string) => void} [options.log]
    */
   constructor(cli, options) {
@@ -83,6 +84,9 @@ export class PageDriver {
     this.attachTimeoutMs = Number(options.attachTimeoutMs ?? 60_000);
     this.screenshotTimeoutMs = Number(options.screenshotTimeoutMs ?? 25_000);
     this.log = options.log ?? (() => {});
+    // Read once at construction: the config is a boot snapshot by design, and the
+    // badge is painted by every marker (re)application, including after navigation.
+    this.marker = options.marker && typeof options.marker === 'object' ? options.marker : {};
     this.attached = false;
   }
 
@@ -222,7 +226,7 @@ export class PageDriver {
     return this.withPage(
       pageId,
       async () => {
-        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId)]);
+        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId, this.marker)]);
         return parseMarkerOutput(stdout);
       },
       target,
@@ -244,8 +248,8 @@ export class PageDriver {
     return this.withPage(
       pageId,
       async () => {
-        await this.cli.run(['--raw', 'run-code', installMarkerCode(pageId)], { timeoutMs: 60_000 });
-        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId)]);
+        await this.cli.run(['--raw', 'run-code', installMarkerCode(pageId, this.marker)], { timeoutMs: 60_000 });
+        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId, this.marker)]);
         return parseMarkerOutput(stdout);
       },
       target,
@@ -409,7 +413,7 @@ export class PageDriver {
       pageId,
       async () => {
         await this.cli.run(['--raw', 'goto', options.url], { timeoutMs: 60_000 });
-        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId)], {
+        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId, this.marker)], {
           retries: 1,
         });
         const parsed = parseEvalOutput(stdout);
@@ -475,7 +479,7 @@ export class PageDriver {
         // A snippet may rewrite the document (page.setContent) or replace its head,
         // which discards the marker without any navigation that would re-run the
         // init script. Re-applying it here keeps the pageId resolvable.
-        const { stdout: marked } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId)]);
+        const { stdout: marked } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId, this.marker)]);
         const marker = parseMarkerOutput(marked);
         return { output, title: marker?.title, url: marker?.url };
       },
@@ -489,4 +493,7 @@ export class PageDriver {
     return { index: currentIndex(stdout) ?? -1, tabs: describeTabs(parseTabList(stdout).tabs) };
   }
 }
+
+
+
 

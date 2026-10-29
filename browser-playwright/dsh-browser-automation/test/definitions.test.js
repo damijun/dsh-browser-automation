@@ -373,6 +373,30 @@ function fakePage(initialTitle) {
   return sandbox;
 }
 
+/**
+ * The badge is the user-facing half of "this page is controlled": it has to be
+ * unpaintable into by the page's CSS (shadow root, all:initial) and must never eat a
+ * click (pointer-events:none). showSharedBadge: false keeps the marker but paints
+ * nothing.
+ */
+test('the marker expression paints the shared badge, unless it is disabled', () => {
+  const pageId = 'dshpg-abcdef-01234567';
+  const on = titleMarkerExpression(pageId);
+  assert.match(on, /__dsh-ba-shared__/);
+  assert.match(on, /attachShadow\(\{ mode: "open" \}\)/);
+  assert.match(on, /pointer-events:none/);
+  assert.match(on, /all:initial/);
+  assert.match(on, /正在与智能体共享/);
+  // Both variants must stay executable in a page-like sandbox.
+  assert.match(runInNewContext(on, fakePage('Start')), /badge/);
+
+  const off = titleMarkerExpression(pageId, { badge: false });
+  assert.doesNotMatch(off, /attachShadow/);
+  assert.doesNotMatch(off, /__dsh-ba-shared__/);
+  const parsed = JSON.parse(runInNewContext(off, fakePage('Start')));
+  assert.equal(parsed.badge, false);
+});
+
 test('the durable marker installer injects the same script through addInitScript', () => {
   const pageId = 'dshpg-abcdef-01234567';
   const code = installMarkerCode(pageId);
@@ -563,6 +587,7 @@ test('sanitize removes undefined so tool results stay lossless JSON', () => {
   assert.equal(sanitize(undefined), null);
   assert.throws(() => sanitize({ big: 1n }));
 });
+
 
 
 

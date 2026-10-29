@@ -17,6 +17,7 @@ export const EDITABLE_KEYS = {
   session: 'string',
   cdpPort: 'number',
   autoAttach: 'boolean',
+  showSharedBadge: 'boolean',
   timeoutMs: 'number',
   requestTimeoutMs: 'number',
   attachTimeoutMs: 'number',
@@ -157,6 +158,7 @@ export async function resetConfigKey({ editor, rowId, fiber, key }) {
     return next;
   });
 }
+
 
 
 

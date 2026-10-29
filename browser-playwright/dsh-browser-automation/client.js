@@ -176,6 +176,9 @@ window.__ModuleLoader__.load({
         'cfg.field.autoAttach': 'Attach at startup',
         'cfg.desc.autoAttach':
           'Attach once when DSH starts, so sidebar pages opened afterwards are visible to the CLI. Costs one daemon process while DSH runs; only one DSH instance at a time.',
+        'cfg.field.showSharedBadge': 'Shared page badge',
+        'cfg.desc.showSharedBadge':
+          'Paint a small "shared with the agent" badge inside every page this plugin controls. It cannot be clicked and is re-applied after navigation.',
       },
       zh: {
         'panel.title': '浏览器自动化',
@@ -248,6 +251,9 @@ window.__ModuleLoader__.load({
         'cfg.field.autoAttach': '开机自动连接',
         'cfg.desc.autoAttach':
           'DSH 启动时先 attach 一次，之后打开的侧边栏页面才能被 CLI 看见。代价是运行期间常驻一个 daemon 进程；同时只能有一个 DSH 实例。',
+        'cfg.field.showSharedBadge': '共享页面标记',
+        'cfg.desc.showSharedBadge':
+          '在插件控制的每个页面里画一个「正在与智能体共享」的小标记：不可点击，页面导航后会自动补回。',
       },
     };
 
@@ -509,6 +515,7 @@ window.__ModuleLoader__.load({
       { key: 'screenshotTimeoutMs', kind: 'number' },
       { key: 'screenshotSettleMs', kind: 'number' },
       { key: 'autoAttach', kind: 'boolean' },
+      { key: 'showSharedBadge', kind: 'boolean' },
       { key: 'debug', kind: 'boolean' },
     ];
 
@@ -585,7 +592,7 @@ window.__ModuleLoader__.load({
           ];
         }
         // Every boolean field renders as the same on/off pair.
-        if (key === 'debug' || key === 'autoAttach') {
+        if (key === 'debug' || key === 'autoAttach' || key === 'showSharedBadge') {
           const on = value === true;
           return [
             { value: false, label: t('cfg.off'), picked: !on },
@@ -1323,6 +1330,7 @@ window.__ModuleLoader__.load({
     };
   },
 });
+
 
 
 

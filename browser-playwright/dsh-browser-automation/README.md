@@ -263,6 +263,19 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 清空所有覆盖后是 `config: {}`，这一行可以整段删掉（删掉等于全部用默认值）。
 宿主若没有 `configEditor`，卡片会退化成只读并说明原因。
 
+### 「正在与智能体共享」标记（showSharedBadge，默认开）
+
+被插件接管/打开的页面，右上角会出现一个悬浮标记：绿点 + 「正在与智能体共享」。
+
+- **为什么画在页面里**：侧边栏每个标签页的标题槽位只对插件自己注册的面板型标签页开放（按 pane id 键控），
+  DSH 自有的浏览器标签页没有对外装饰接口。页面是本插件完全掌管的表面，且注释脚本（init script）会在
+  **每次导航后自动补回**标记。
+- **不干扰页面**：position:fixed + z-index:2147483647 + **pointer-events:none**（永远不会吃掉点击），
+  内部用 shadow root + ll:initial，页面的 CSS 既改不动它也污染不到页面。
+- **什么时候出现**：rowser_open / rowser_claim 成功之后立即出现；goto、eload 后自动补回。
+- **什么时候消失**：关闭该标签页；或下一次导航后（插件已卸载/停用、注释脚本不再安装）；showSharedBadge: false 则从不出现。
+- 它是**页面内的 DOM 节点**（id="__dsh-ba-shared__"），页面自己的脚本理论上能删掉它 —— 这不影响功能，只是标记会没。
+
 ### 6.2 直接改 YAML
 
 ```yaml
@@ -271,6 +284,7 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
   config:
     session: dsh                 # playwright-cli -s=；所有 DSH 会话共用一个
     cdpPort: 9222                # 见下：必须和启动参数一致
+    showSharedBadge: true        # 页面右上角「正在与智能体共享」标记（见 6.1）
     command: playwright-cli      # 或绝对路径
     nodePath: auto               # 见下：哪个 node 去跑 CLI 的 .js 入口
     timeoutMs: 20000             # 单次 CLI 调用超时；超时重试一次然后报错
@@ -506,6 +520,7 @@ node --test
 - `files` 只含运行时文件；`docs/` 会一起发出去（`docs/concurrency-fix.md` 是待办规格，可留可去）。
 - 发布前跑 `npm test`（99 用例）。
 - 标题/描述/图标来自 `locale/{en,zh}.json` 与 `icon.svg`（矢量，插件页当封面用）。
+
 
 
 

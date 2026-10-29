@@ -52,6 +52,14 @@ const fields = {
         'A daemon process stays alive while DSH runs.',
     ),
 
+  showSharedBadge: z
+    .boolean()
+    .default(true)
+    .description(
+      'Show a floating badge on every page this plugin controls. Painted inside the page ' +
+        '(shadow DOM, pointer-events none) and re-applied after navigation.',
+    ),
+
   timeoutMs: z
     .number()
     .default(20_000)
@@ -110,6 +118,7 @@ const VOLATILE = [
   'nodePath',
   'cdpPort',
   'autoAttach',
+  'showSharedBadge',
   'timeoutMs',
   'requestTimeoutMs',
   'attachTimeoutMs',
@@ -125,6 +134,7 @@ export const Config = z.object(
 );
 
 export default Config;
+
 
 
 

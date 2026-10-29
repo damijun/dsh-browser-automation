@@ -42,6 +42,7 @@ test('every editable key has a declared type and nothing else is writable', () =
     'screenshotSettleMs',
     'screenshotTimeoutMs',
     'session',
+    'showSharedBadge',
     'timeoutMs',
   ]);
   assert.equal(coerceConfigValue('__proto__', 'x').ok, false);
@@ -137,6 +138,8 @@ test('a missing row or a bad value fails with a readable reason', async () => {
   assert.equal(findRow(editor, 'browser-automation'), null);
   assert.equal(findRow({ entries: () => { throw new Error('boom'); } }, 'x'), null);
 });
+
+
 
 
 

@@ -22,6 +22,7 @@ const KEYS = [
   'requestTimeoutMs',
   'attachTimeoutMs',
   'autoAttach',
+  'showSharedBadge',
   'screenshotTimeoutMs',
   'screenshotSettleMs',
   'debug',
@@ -55,6 +56,7 @@ test('the defaults are the values the plugin runs with out of the box', () => {
   assert.equal(value('screenshotSettleMs'), 1_200);
   assert.equal(value('attachTimeoutMs'), 60_000);
   assert.equal(value('autoAttach'), true);
+  assert.equal(value('showSharedBadge'), true);
   assert.equal(value('screenshotTimeoutMs'), 25_000);
   assert.equal(value('debug'), false);
 });
@@ -78,6 +80,7 @@ test('the host half exports the schema the Loader validates against', () => {
   assert.equal(typeof host.apply, 'function');
   assert.deepEqual(host.inject, ['tools', 'webServer']);
 });
+
 
 
 

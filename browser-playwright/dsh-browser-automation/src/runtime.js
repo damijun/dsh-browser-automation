@@ -124,6 +124,7 @@ export class Runtime {
       log: this.log,
     });
     this.driver = new PageDriver(this.cli, {
+      marker: { badge: this.config.showSharedBadge !== false },
       cdpUrl: String(this.config.cdpUrl ?? 'http://127.0.0.1:9222'),
       attachTimeoutMs: Number(this.config.attachTimeoutMs ?? 60_000),
       screenshotTimeoutMs: Number(this.config.screenshotTimeoutMs ?? 25_000),
@@ -998,6 +999,7 @@ export function requireBridge(bridge, tool) {
 }
 
 export { sessionTag, resolveIndex };
+
 
 
 
