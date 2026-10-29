@@ -1,6 +1,29 @@
 import { Bridge, readJsonBody } from './src/bridge.js';
+import { Config } from './src/config.js';
+import { applyConfigChange, findRow, resetConfigKey } from './src/config-write.js';
 import { Runtime } from './src/runtime.js';
 import { createTools } from './src/tools.js';
+
+export { Config };
+
+/**
+ * Read one configuration value.
+ *
+ * Fields declared `.volatile()` (every user-facing knob, so the settings form can
+ * edit them) arrive as reference objects read with `.get()`, while anything else
+ * arrives as ordinary data. This helper accepts both, so the plugin keeps working
+ * whichever way a field is declared.
+ *
+ * @param {unknown} value
+ * @param {unknown} fallback
+ */
+const read = (value, fallback) => {
+  if (value && typeof (/** @type {any} */ (value).get) === 'function') {
+    const got = /** @type {any} */ (value).get();
+    return got === undefined ? fallback : got;
+  }
+  return value === undefined ? fallback : value;
+};
 
 /**
  * Host half of the DSH sidebar-browser automation plugin.
@@ -32,19 +55,42 @@ const ROUTE_PREFIX = '/dsh-browser-automation/bridge/';
 const ROUTE_REGISTRATION = ROUTE_PREFIX.slice(0, -1);
 
 /**
+ * Identity of this plugin's Loader row.
+ *
+ * The settings page seats configuration by package name and row id: a bundle's own
+ * configuration lives in `plugins.bundle.config` keyed by PACKAGE_NAME, and the row
+ * id is what the settings service addresses when it builds a form for one entry.
+ */
+const PACKAGE_NAME = '@local/dsh-browser-automation';
+const ROW_ID = 'browser-automation';
+
+/**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {Record<string, unknown>} config
  */
 export function apply(ctx, config) {
+  const source = config ?? {};
   const settings = {
-    session: 'dsh',
-    command: 'playwright-cli',
-    nodePath: 'auto',
-    cdpUrl: 'http://127.0.0.1:9222',
-    timeoutMs: 20_000,
-    requestTimeoutMs: 20_000,
-    debug: false,
-    ...(config ?? {}),
+    session: read(source.session, 'dsh'),
+    command: read(source.command, 'playwright-cli'),
+    nodePath: read(source.nodePath, 'auto'),
+    cdpUrl: read(source.cdpUrl, 'http://127.0.0.1:9222'),
+    timeoutMs: read(source.timeoutMs, 20_000),
+    requestTimeoutMs: read(source.requestTimeoutMs, 20_000),
+    screenshotSettleMs: read(source.screenshotSettleMs, 1_200),
+    debug: read(source.debug, false) === true,
+  };
+  // Plain copy for read-out: the settings card shows what this row is running with,
+  // whether or not it can reach the form model.
+  settings.effective = {
+    session: settings.session,
+    command: settings.command,
+    nodePath: settings.nodePath,
+    cdpUrl: settings.cdpUrl,
+    timeoutMs: settings.timeoutMs,
+    requestTimeoutMs: settings.requestTimeoutMs,
+    screenshotSettleMs: settings.screenshotSettleMs,
+    debug: settings.debug,
   };
 
   const debug = settings.debug === true;
@@ -60,6 +106,20 @@ export function apply(ctx, config) {
   const health = { bridgeError: null };
   runtime.health = health;
 
+  /**
+   * The Host's config editor, when this composition has one.
+   *
+   * Read with `ctx.get` instead of `inject`: the plugin must keep working on a Host
+   * without that service, where the settings card is simply read-only.
+   */
+  const configEditor = () => {
+    try {
+      return ctx.get('configEditor') ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   ctx.effect(
     () => {
       let dispose;
@@ -67,7 +127,8 @@ export function apply(ctx, config) {
         dispose = ctx.webServer.register({
           kind: 'prefix',
           path: ROUTE_REGISTRATION,
-          handler: (request, response) => serve({ request, response, runtime, bridge, settings, log }),
+          handler: (request, response) =>
+            serve({ request, response, runtime, bridge, settings, log, configEditor }),
         });
       } catch (error) {
         // A bridge that cannot mount must not cost the CLI tools: every page
@@ -115,8 +176,9 @@ export function apply(ctx, config) {
  * @param {Bridge} input.bridge
  * @param {Record<string, unknown>} input.settings
  * @param {(message: string) => void} input.log
+ * @param {() => any} input.configEditor
  */
-async function serve({ request, response, runtime, bridge, settings, log }) {
+async function serve({ request, response, runtime, bridge, settings, log, configEditor }) {
   response.setHeader('content-type', 'application/json; charset=utf-8');
   response.setHeader('cache-control', 'no-store');
   response.setHeader('access-control-allow-origin', '*');
@@ -156,6 +218,71 @@ async function serve({ request, response, runtime, bridge, settings, log }) {
 
   try {
     switch (action) {
+      case 'config': {
+        // The settings card's read path: what this row is actually running with,
+        // whether the Host can write it back, and — when it cannot — why not.
+        const values = runtime.config?.effective ?? {};
+        const editor = configEditor();
+        let reason = null;
+        let row = null;
+        if (!editor) {
+          reason = 'this Host does not expose configEditor';
+        } else {
+          row = findRow(editor, ROW_ID);
+          if (!row) {
+            // Only name the rows that look like this plugin's: dumping every entry
+            // (~150) would bury the one line that matters.
+            let near = [];
+            try {
+              near = (editor.entries() ?? [])
+                .map((entry) => (entry && entry.id ? String(entry.id) : ''))
+                .filter((id) => id.includes('browser'));
+            } catch {
+              near = [];
+            }
+            reason = `no profile row "${ROW_ID}"${near.length ? ` (rows like: ${near.join(', ')})` : ''}`;
+          }
+        }
+        // The override layer, so the card can badge and reset exactly the keys this
+        // profile decided on instead of guessing from the values.
+        let overrides = {};
+        if (row) {
+          try {
+            const layer = (editor.configuration() ?? []).find(
+              (entry) => entry && (entry.entry === row || entry.entry?.id === row.id),
+            );
+            if (layer && layer.override && typeof layer.override === 'object') overrides = { ...layer.override };
+          } catch {
+            overrides = {};
+          }
+        }
+        reply(response, 200, {
+          ok: true,
+          value: { values, packageName: PACKAGE_NAME, rowId: ROW_ID, editable: Boolean(row), reason, overrides },
+        });
+        return;
+      }
+      case 'config-set': {
+        const editor = configEditor();
+        if (!editor) {
+          reply(response, 501, { ok: false, error: 'this Host does not expose configEditor, so settings are read-only' });
+          return;
+        }
+        const key = String(body.key ?? '');
+        const value = await applyConfigChange({ editor, rowId: ROW_ID, key, value: body.value });
+        reply(response, 200, { ok: true, value: { key, value } });
+        return;
+      }
+      case 'config-reset': {
+        const editor = configEditor();
+        if (!editor) {
+          reply(response, 501, { ok: false, error: 'this Host does not expose configEditor, so settings are read-only' });
+          return;
+        }
+        await resetConfigKey({ editor, rowId: ROW_ID, key: String(body.key ?? '') });
+        reply(response, 200, { ok: true, value: { key: String(body.key ?? '') } });
+        return;
+      }
       case 'hello': {
         const clientId = String(body.clientId ?? '');
         if (!clientId) {
@@ -247,4 +374,6 @@ function reply(response, status, body) {
   response.writeHead(status, { 'content-length': Buffer.byteLength(text) });
   response.end(text);
 }
+
+
 

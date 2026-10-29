@@ -97,6 +97,11 @@ window.__ModuleLoader__.load({
     const PANEL_ID = '@local/dsh-browser-automation/panel';
     const PANEL_KIND = 'browser-automation';
     const LOCALE_NS = 'browser-automation';
+    // The package name and row id this bundle's configuration belongs to: the
+    // Plugins page seats a bundle's settings by package name, and the form model is
+    // addressed by the row id the patch declares.
+    const PACKAGE_NAME = '@local/dsh-browser-automation';
+    const ROW_ID = 'browser-automation';
 
     const DICT = {
       en: {
@@ -119,6 +124,45 @@ window.__ModuleLoader__.load({
         'panel.noSession': 'This tab is not bound to a session.',
         'panel.clients': 'clients',
         'panel.polls': 'held polls',
+        'cfg.title': 'Browser automation settings',
+        'cfg.summary': 'Sidebar browser automation',
+        'cfg.loading': 'Loading configuration…',
+        'cfg.save': 'Save',
+        'cfg.saving': 'Saving…',
+        'cfg.saved': 'Saved. The row reloads with the new values.',
+        'cfg.reset': 'Reset to default.',
+        'cfg.resetField': 'Reset',
+        'cfg.readOnly':
+          'Read-only: this host does not serve the settings form. Edit cordis.patch.yml in the profile to change these values.',
+        'cfg.noService': 'no configForms service',
+        'cfg.noForm': 'no form for this row',
+        'cfg.writeHint': 'A save writes the profile patch and reloads this row.',
+        'cfg.path': 'Profile patch: cordis.patch.yml → id: browser-automation',
+        'cfg.errNumber': '{key} must be a number.',
+        'cfg.field.nodePath': 'Node path',
+        'cfg.field.command': 'CLI command',
+        'cfg.field.session': 'CLI session name',
+        'cfg.field.cdpUrl': 'CDP endpoint',
+        'cfg.field.timeoutMs': 'CLI timeout (ms)',
+        'cfg.field.requestTimeoutMs': 'Bridge timeout (ms)',
+        'cfg.field.screenshotSettleMs': 'Screenshot settle (ms)',
+        'cfg.field.debug': 'Debug logging',
+        'cfg.subtitle': 'Values live in this profile patch; saving reloads this row.',
+        'cfg.auto': 'Auto',
+        'cfg.path': 'PATH',
+        'cfg.custom': 'Custom path',
+        'cfg.customPlaceholder': 'absolute path to node.exe',
+        'cfg.on': 'On',
+        'cfg.off': 'Off',
+        'cfg.overridden': 'overridden',
+        'cfg.desc.nodePath': 'Auto prefers the Node DSH ships, then PATH.',
+        'cfg.desc.command': 'Command name on PATH, or an absolute path.',
+        'cfg.desc.session': 'playwright-cli -s= name; every DSH session shares it.',
+        'cfg.desc.cdpUrl': 'The debug endpoint DSH Desktop was started with.',
+        'cfg.desc.timeoutMs': 'Per-call timeout for one CLI invocation.',
+        'cfg.desc.requestTimeoutMs': 'How long a tool waits for the page half to answer.',
+        'cfg.desc.screenshotSettleMs': 'Wait for a first frame after focusing a hidden tab.',
+        'cfg.desc.debug': 'Print bridge and CLI diagnostics to the host log.',
       },
       zh: {
         'panel.title': '浏览器自动化',
@@ -140,6 +184,44 @@ window.__ModuleLoader__.load({
         'panel.noSession': '这个标签页没有绑定到会话。',
         'panel.clients': '客户端',
         'panel.polls': '挂起轮询',
+        'cfg.title': '浏览器自动化配置',
+        'cfg.summary': '侧边栏浏览器自动化',
+        'cfg.loading': '正在读取配置…',
+        'cfg.save': '保存',
+        'cfg.saving': '保存中…',
+        'cfg.saved': '已保存，这一行会用新值重新加载。',
+        'cfg.reset': '已恢复默认值。',
+        'cfg.resetField': '恢复默认',
+        'cfg.readOnly': '只读：当前宿主没有提供设置表单。要改这些值，请编辑 profile 里的 cordis.patch.yml。',
+        'cfg.noService': '没有 configForms 服务',
+        'cfg.noForm': '这一行没有可编辑的表单',
+        'cfg.writeHint': '保存会写入 profile patch 并重新加载这一行。',
+        'cfg.path': 'Profile patch：cordis.patch.yml → id: browser-automation',
+        'cfg.errNumber': '{key} 必须是数字。',
+        'cfg.field.nodePath': 'Node 路径',
+        'cfg.field.command': 'CLI 命令',
+        'cfg.field.session': 'CLI 会话名',
+        'cfg.field.cdpUrl': 'CDP 端点',
+        'cfg.field.timeoutMs': 'CLI 超时（ms）',
+        'cfg.field.requestTimeoutMs': '桥超时（ms）',
+        'cfg.field.screenshotSettleMs': '截图首帧等待（ms）',
+        'cfg.field.debug': '调试日志',
+        'cfg.subtitle': '值保存在这个 profile 的 patch 里，保存后这一行会重新加载。',
+        'cfg.auto': '自动',
+        'cfg.path': 'PATH',
+        'cfg.custom': '自定义路径',
+        'cfg.customPlaceholder': 'node.exe 的绝对路径',
+        'cfg.on': '开启',
+        'cfg.off': '关闭',
+        'cfg.overridden': '已覆盖',
+        'cfg.desc.nodePath': '自动：优先用 DSH 自带的 Node，其次是 PATH。',
+        'cfg.desc.command': 'PATH 上的命令名，或绝对路径。',
+        'cfg.desc.session': 'playwright-cli 的 -s= 会话名；所有 DSH 会话共用。',
+        'cfg.desc.cdpUrl': 'DSH 桌面端启动时的调试端点。',
+        'cfg.desc.timeoutMs': '单次 CLI 调用的超时时间。',
+        'cfg.desc.requestTimeoutMs': '等页面半边回答的最长时间。',
+        'cfg.desc.screenshotSettleMs': '把隐藏标签页切到前台后，等首帧的时间。',
+        'cfg.desc.debug': '把桥与 CLI 诊断打印到宿主日志。',
       },
     };
 
@@ -339,6 +421,325 @@ window.__ModuleLoader__.load({
       };
     }
 
+    /**
+     * The configuration card on this bundle's page in the sidebar's Plugins view.
+     *
+     * Reads through the page bridge (`config`) and writes through the same route
+     * (`config-set` / `config-reset`), which the Host resolves with
+     * `ctx.configEditor` — the service that persists a raw config and re-applies it
+     * through the normal Loader path, the same place a hand edit of the profile patch
+     * lands. A Host without that service answers `editable: false`, and the card
+     * stays read-only while still showing what is in effect.
+     */
+    const CONFIG_FIELDS = [
+      { key: 'nodePath', kind: 'text' },
+      { key: 'command', kind: 'text' },
+      { key: 'session', kind: 'text' },
+      { key: 'cdpUrl', kind: 'text' },
+      { key: 'timeoutMs', kind: 'number' },
+      { key: 'requestTimeoutMs', kind: 'number' },
+      { key: 'screenshotSettleMs', kind: 'number' },
+      { key: 'debug', kind: 'boolean' },
+    ];
+
+    const CONFIG_CSS = [
+      '.dshcfg{color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px}',
+      '.dshcfg-card{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;',
+      'background:var(--dsw-alias-bg-layer-1);overflow:hidden}',
+      '.dshcfg-header{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;',
+      'background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:12px 14px}',
+      '.dshcfg-head-text{display:flex;flex-direction:column;gap:2px;flex:1}',
+      '.dshcfg-name{font-weight:600;font-size:13px}',
+      '.dshcfg-desc{color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.45}',
+      '.dshcfg-chev{width:7px;height:7px;border-right:1.5px solid var(--dsw-alias-label-secondary);',
+      'border-bottom:1.5px solid var(--dsw-alias-label-secondary);transform:rotate(45deg);',
+      'transition:transform .15s ease;margin-right:2px;flex:none}',
+      '.dshcfg-chev-open{transform:rotate(-135deg)}',
+      '.dshcfg-body{border-top:1px solid var(--dsw-alias-border-l1);padding:4px 14px 12px;',
+      'display:flex;flex-direction:column;gap:2px}',
+      '.dshcfg-field{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,300px);gap:14px;',
+      'align-items:center;padding:9px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+      '.dshcfg-field:last-of-type{border-bottom:0}',
+      '.dshcfg-left{display:flex;flex-direction:column;gap:3px;min-width:0}',
+      '.dshcfg-row-name{display:flex;align-items:center;gap:8px}',
+      '.dshcfg-label{font-weight:500}',
+      '.dshcfg-badge{border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:0 6px;',
+      'font-size:10.5px;color:var(--dsw-alias-label-secondary)}',
+      '.dshcfg-link{background:none;border:0;padding:0;color:var(--dsw-alias-brand-primary);',
+      'font:inherit;font-size:11px;cursor:pointer}',
+      '.dshcfg-link:disabled{opacity:.5;cursor:default}',
+      '.dshcfg-control{display:flex;flex-direction:column;gap:6px;min-width:0}',
+      '.dshcfg-input{width:100%;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1);',
+      'border-radius:6px;background:var(--dsw-alias-bg-base);color:inherit;font:inherit;padding:5px 8px}',
+      '.dshcfg-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}',
+      '.dshcfg-input:disabled{opacity:.6}',
+      '.dshcfg-seg{display:flex;align-items:center;gap:2px;border:1px solid var(--dsw-alias-border-l1);',
+      'border-radius:7px;padding:2px;width:fit-content;max-width:100%;flex-wrap:wrap}',
+      '.dshcfg-seg-btn{background:none;border:0;border-radius:5px;color:var(--dsw-alias-label-secondary);',
+      'font:inherit;font-size:11.5px;padding:3px 10px;cursor:pointer}',
+      '.dshcfg-seg-btn:disabled{opacity:.5;cursor:default}',
+      '.dshcfg-seg-on{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-weight:500}',
+      '.dshcfg-foot{display:flex;align-items:center;gap:10px;padding-top:12px;flex-wrap:wrap}',
+      '.dshcfg-grow{flex:1}',
+      '.dshcfg-primary{border:0;border-radius:7px;background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base);',
+      'font:inherit;font-weight:600;padding:6px 16px;cursor:pointer}',
+      '.dshcfg-primary:disabled{opacity:.45;cursor:default}',
+      '.dshcfg-err{border:1px solid var(--dsw-alias-state-error-primary);border-radius:8px;padding:8px;',
+      'color:var(--dsw-alias-state-error-primary);white-space:pre-wrap;margin:8px 0 4px}',
+      '.dshcfg-note{color:var(--dsw-alias-state-success-primary);font-size:11.5px}',
+      '.dshcfg-hint{color:var(--dsw-alias-label-secondary);font-size:11.5px}',
+      '.dshcfg-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}',
+    ].join('');
+
+    /**
+     * @param {(key: string) => string} t
+     */
+    function makeConfigCard(t) {
+      const h = React.createElement;
+
+      /** Segmented choices for the two fields with a small, fixed option set. */
+      const segmentsFor = (key, value) => {
+        if (key === 'nodePath') {
+          const picked = value === 'auto' || value === 'path' ? value : 'custom';
+          return [
+            { value: 'auto', label: t('cfg.auto'), picked: picked === 'auto' },
+            { value: 'path', label: t('cfg.path'), picked: picked === 'path' },
+            { value: 'custom', label: t('cfg.custom'), picked: picked === 'custom' },
+          ];
+        }
+        if (key === 'debug') {
+          const on = value === true;
+          return [
+            { value: false, label: t('cfg.off'), picked: !on },
+            { value: true, label: t('cfg.on'), picked: on },
+          ];
+        }
+        return null;
+      };
+
+      return function ConfigCard(props) {
+        const view = props && props.view;
+        const [state, setState] = React.useState({
+          phase: 'loading',
+          values: null,
+          overrides: {},
+          dirty: {},
+          error: null,
+          note: null,
+          writable: false,
+          reason: null,
+          open: true,
+        });
+        const alive = React.useRef(true);
+        React.useEffect(
+          () => () => {
+            alive.current = false;
+          },
+          [],
+        );
+
+        const load = React.useCallback(async () => {
+          try {
+            const answer = await call('config', {}, 10_000);
+            if (!alive.current) return;
+            setState((previous) => ({
+              ...previous,
+              phase: 'ready',
+              values: answer && answer.values ? answer.values : null,
+              overrides: (answer && answer.overrides) || {},
+              writable: Boolean(answer && answer.editable === true),
+              reason: (answer && answer.reason) || null,
+              error: null,
+            }));
+          } catch (failure) {
+            if (!alive.current) return;
+            setState((previous) => ({ ...previous, phase: 'ready', error: failure.message }));
+          }
+        }, []);
+
+        React.useEffect(() => {
+          load();
+        }, [load]);
+
+        if (view === 'summary') return h('span', { className: 'dshcfg-desc' }, t('cfg.summary'));
+        if (state.phase === 'loading' && !state.values) {
+          return h('div', { className: 'dshcfg' }, h('div', { className: 'dshcfg-card' }, t('cfg.loading')));
+        }
+
+        const values = state.values ?? {};
+        const dirty = state.dirty;
+        const setDirty = (key, value) =>
+          setState((previous) => ({ ...previous, dirty: { ...previous.dirty, [key]: value } }));
+        const pendingCount = Object.keys(dirty).length;
+        const valueOf = (key) => (Object.hasOwn(dirty, key) ? dirty[key] : values[key]);
+
+        const save = async () => {
+          if (!state.writable) return;
+          setState((previous) => ({ ...previous, phase: 'saving', error: null, note: null }));
+          try {
+            for (const [key, raw] of Object.entries(dirty)) {
+              const field = CONFIG_FIELDS.find((entry) => entry.key === key);
+              const value = field && field.kind === 'number' ? Number(raw) : raw;
+              if (field && field.kind === 'number' && !Number.isFinite(value)) {
+                throw new Error(t('cfg.errNumber').replace('{key}', key));
+              }
+              await call('config-set', { key, value }, 20_000);
+            }
+            if (alive.current) {
+              setState((previous) => ({ ...previous, dirty: {}, phase: 'ready', note: t('cfg.saved') }));
+            }
+            await load();
+          } catch (failure) {
+            if (alive.current) setState((previous) => ({ ...previous, phase: 'ready', error: failure.message }));
+          }
+        };
+
+        const reset = async (key) => {
+          if (!state.writable) return;
+          try {
+            await call('config-reset', { key }, 20_000);
+            if (alive.current) setState((previous) => ({ ...previous, note: t('cfg.reset') }));
+            await load();
+          } catch (failure) {
+            if (alive.current) setState((previous) => ({ ...previous, error: failure.message }));
+          }
+        };
+
+        const busy = state.phase === 'saving';
+
+        const control = (field) => {
+          const current = valueOf(field.key);
+          const segments = segmentsFor(field.key, current);
+          if (segments) {
+            return h('div', { className: 'dshcfg-seg', role: 'group' }, [
+              ...segments.map((segment) =>
+                h(
+                  'button',
+                  {
+                    key: String(segment.value),
+                    type: 'button',
+                    className: 'dshcfg-seg-btn' + (segment.picked ? ' dshcfg-seg-on' : ''),
+                    disabled: busy || !state.writable,
+                    onClick: () => {
+                      if (segment.value === 'custom') {
+                        // Keep whatever custom path is in force, so switching to
+                        // "custom" never silently blanks the field.
+                        const existing = current === 'auto' || current === 'path' ? '' : current;
+                        setDirty(field.key, existing ?? '');
+                      } else {
+                        setDirty(field.key, segment.value);
+                      }
+                    },
+                  },
+                  segment.label,
+                ),
+              ),
+              field.key === 'nodePath' && (current !== 'auto' && current !== 'path')
+                ? h('input', {
+                    key: 'custom-path',
+                    className: 'dshcfg-input dshcfg-mono',
+                    type: 'text',
+                    placeholder: t('cfg.customPlaceholder'),
+                    value: current === undefined || current === null ? '' : String(current),
+                    disabled: busy || !state.writable,
+                    onChange: (event) => setDirty(field.key, event.target.value),
+                  })
+                : null,
+            ]);
+          }
+          return h('input', {
+            className: 'dshcfg-input' + (field.kind === 'number' ? ' dshcfg-mono' : ''),
+            type: 'text',
+            value: current === undefined || current === null ? '' : String(current),
+            disabled: busy || !state.writable,
+            onChange: (event) => setDirty(field.key, event.target.value),
+          });
+        };
+
+        return h('div', { className: 'dshcfg' }, [
+          h('style', { key: 'css' }, CONFIG_CSS),
+          h('section', { key: 'card', className: 'dshcfg-card' }, [
+            h(
+              'button',
+              {
+                key: 'header',
+                type: 'button',
+                className: 'dshcfg-header',
+                'aria-expanded': state.open ? 'true' : 'false',
+                onClick: () => setState((previous) => ({ ...previous, open: !previous.open })),
+              },
+              [
+                h('span', { key: 'text', className: 'dshcfg-head-text' }, [
+                  h('span', { key: 'title', className: 'dshcfg-name' }, t('cfg.title')),
+                  h('span', { key: 'sub', className: 'dshcfg-desc' }, t('cfg.subtitle')),
+                ]),
+                state.note ? h('span', { key: 'note', className: 'dshcfg-note' }, state.note) : null,
+                h('span', {
+                  key: 'chevron',
+                  className: 'dshcfg-chev' + (state.open ? ' dshcfg-chev-open' : ''),
+                  'aria-hidden': 'true',
+                }),
+              ],
+            ),
+            state.open
+              ? h('div', { key: 'body', className: 'dshcfg-body' }, [
+                  state.error ? h('div', { key: 'err', className: 'dshcfg-err' }, state.error) : null,
+                  !state.writable
+                    ? h(
+                        'div',
+                        { key: 'ro', className: 'dshcfg-hint' },
+                        [t('cfg.readOnly'), state.reason ? ` (${state.reason})` : ''].join(''),
+                      )
+                    : null,
+                  ...CONFIG_FIELDS.map((field) => {
+                    const overridden = Object.hasOwn(state.overrides, field.key);
+                    return h('div', { key: field.key, className: 'dshcfg-field' }, [
+                      h('div', { key: 'left', className: 'dshcfg-left' }, [
+                        h('div', { key: 'name', className: 'dshcfg-row-name' }, [
+                          h('span', { key: 'label', className: 'dshcfg-label' }, t(`cfg.field.${field.key}`)),
+                          overridden
+                            ? h('span', { key: 'badge', className: 'dshcfg-badge' }, t('cfg.overridden'))
+                            : null,
+                          overridden
+                            ? h(
+                                'button',
+                                {
+                                  key: 'reset',
+                                  type: 'button',
+                                  className: 'dshcfg-link',
+                                  disabled: busy || !state.writable,
+                                  onClick: () => reset(field.key),
+                                },
+                                t('cfg.resetField'),
+                              )
+                            : null,
+                        ]),
+                        h('div', { key: 'desc', className: 'dshcfg-desc' }, t(`cfg.desc.${field.key}`)),
+                      ]),
+                      h('div', { key: 'control', className: 'dshcfg-control' }, control(field)),
+                    ]);
+                  }),
+                  h('div', { key: 'foot', className: 'dshcfg-foot' }, [
+                    h('span', { key: 'hint', className: 'dshcfg-hint' }, t('cfg.writeHint')),
+                    h('span', { key: 'grow', className: 'dshcfg-grow' }),
+                    h(
+                      'button',
+                      {
+                        key: 'save',
+                        type: 'button',
+                        className: 'dshcfg-primary',
+                        disabled: busy || pendingCount === 0 || !state.writable,
+                        onClick: save,
+                      },
+                      busy ? t('cfg.saving') : t('cfg.save'),
+                    ),
+                  ]),
+                ])
+              : null,
+          ]),
+        ]);
+      };
+    }
     /**
      * @param {import('@deepseek-ai/cordis').Context} ctx
      */
@@ -753,6 +1154,25 @@ window.__ModuleLoader__.load({
             disposers.push(
               ctx.slots.register({ name: 'sidebar.right.pane.tab', key: PANEL_ID }, makePanel(t)),
             );
+            // A bundle's own configuration is seated on its page in the sidebar's
+            // Plugins view (the slot contract says a third-party bundle's config
+            // belongs in `plugins.bundle.config`, not `plugins.item`). Nested inject
+            // so a host that never declares that slot still loads everything else.
+            const slotCtx = ctx;
+            if (slotCtx.slots && typeof slotCtx.slots.inject === 'function') {
+              slotCtx.slots.inject('plugins.bundle.config', () => {
+                const dispose = slotCtx.slots.register(
+                  {
+                    name: 'plugins.bundle.config',
+                    key: PACKAGE_NAME,
+                    locale: LOCALE_NS,
+                  },
+                  makeConfigCard(t),
+                );
+                disposers.push(dispose);
+                return dispose;
+              });
+            }
           } catch (error) {
             console.warn(`[dsh-browser-automation] status panel could not register: ${error.message}`);
           }
@@ -789,3 +1209,12 @@ window.__ModuleLoader__.load({
     };
   },
 });
+
+
+
+
+
+
+
+
+

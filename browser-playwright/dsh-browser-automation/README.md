@@ -231,7 +231,30 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 
 ## 6. 配置
 
-写在 `cordis.patch.yml` 里（本 bundle 自带一份默认值，用户层可覆盖）：
+有两种改法，落点是**同一处**：profile 的 `cordis.patch.yml`。
+
+### 6.1 设置卡片（推荐）
+
+左侧「插件」→ 搜「侧边栏浏览器自动化」→ 点进去，页面里有「浏览器自动化配置」卡片：
+
+- 卡片可折叠（点标题行），每项下面一行说明；
+- 只有几个确定取值的项用**分段按钮**：`Node 路径` = 自动 / PATH / 自定义路径（选自定义才出现输入框）、`调试日志` = 关闭 / 开启；其余是文本框 / 数字框；
+- 改过的项会显示「已覆盖」徽标和「恢复默认」；右下角「保存」把所有改动一次写入；
+- 保存走宿主 `ctx.configEditor.edit()`，也就是**只写 override 层**，`config` 里只出现你真正改过的键；保存后这一行会用新值重新加载。
+
+写到 patch 里的形状永远是三段：
+
+```yaml
+- id: browser-automation
+  name: '@local/dsh-browser-automation'
+  config:
+    debug: true
+```
+
+清空所有覆盖后是 `config: {}`，这一行可以整段删掉（删掉等于全部用默认值）。
+宿主若没有 `configEditor`，卡片会退化成只读并说明原因。
+
+### 6.2 直接改 YAML
 
 ```yaml
 - id: browser-automation
@@ -309,7 +332,7 @@ cd dsh-browser-automation
 node --test
 ```
 
-88 个用例，覆盖：
+98 个用例，覆盖：
 
 - `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、零命中/多命中、索引漂移）；
 - 标记脚本（追加、幂等、剥旧标记、页面改标题后补回、更新 `<title>` 的场景）——用 `node:vm` + 假 DOM 真跑；
@@ -325,6 +348,10 @@ node --test
   `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/找不到 chip/toggle 抛错"五种情况下的动作序列、
   `close-page` 真的调 `close(tabId)`、**collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、
   失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
+- **配置读写**：Config 的 8 个字段必须全部 `.volatile()`（否则表单看不到），默认值与 README 一致，profile 覆盖经引用读取；
+  写入只落 override 层（对照组：行内 `current` 已含 bundle 默认值，合并它会冻结默认值），`include:` 前缀的行 id 要能匹配，
+  白名单用 `hasOwn`（`__proto__` 不能绕过），数字/布尔/空串校验；切片的 `configuration()` 被伪造时退回 `current`；
+- **配置卡片首帧**：用 harness 的 React stub 直接渲染一次 —— 卡片在首帧抛错会让整个插件页白屏，而且不报错；
 - **状态面板的三次注册**：tab 类型（`id` + `kind`）、body（`sidebar.right.pane.tab` + 用类型 `id` 作 key）、
   locale 文案，缺任何一个的表现都是"用户看到一个没有内容的标签页"而且不报错；外加 `guide` 条目
   （`id`/`title`/`icon`）—— 没有它，面板只能靠 chip 或工具调用才找得到，右侧"开始"页里不会出现；
@@ -381,3 +408,4 @@ DSH 在 **boot 阶段**把"任一行激活失败"当致命错误，所以一个�
 改完 `client.js` 后不要立刻刷新页面，等 `plugin_manager` 那步完成。正确顺序：
 改文件 → disable → enable（宿主侧生效）→ 刷新页面（客户端侧生效）。
 | CLI 超时 | `playwright-cli list`（看守护进程），必要时 `playwright-cli -s=dsh detach` |
+

@@ -146,8 +146,14 @@ function harness(options = {}) {
         },
       },
       slots: {
+        // The card's seat is a nested inject: the slot waits for the slot type to
+        // exist, so the fake runs the callback immediately (and records it).
+        inject: (name, callback) => {
+          registrations.push(['inject', name]);
+          callback();
+        },
         register: (options, component) => {
-          registrations.push(['slot', options.name, options.key, typeof component]);
+          registrations.push(['slot', options.name, options.key, typeof component, component]);
           return () => {};
         },
       },
@@ -236,6 +242,24 @@ test('apply registers the panel tab type, its body and its strings', async () =>
     registrations.some((entry) => entry[0] === 'locale' && entry[1] === 'browser-automation'),
     'the panel strings were not registered with the locale service',
   );
+
+  // The configuration card sits on this bundle's page in the Plugins view.
+  const seat = registrations.find((entry) => entry[0] === 'slot' && entry[1] === 'plugins.bundle.config');
+  assert.ok(seat, 'no configuration card was registered');
+  assert.equal(seat[2], '@local/dsh-browser-automation', 'the seat is keyed by package name');
+  assert.equal(seat[3], 'function');
+  assert.ok(
+    registrations.some((entry) => entry[0] === 'inject' && entry[1] === 'plugins.bundle.config'),
+    'the card must wait for the slot type to exist',
+  );
+  // A card that throws on its first render takes the whole Plugins page down, so
+  // render it here with the harness's React stub.
+  const ConfigCard = seat[4];
+  assert.equal(typeof ConfigCard, 'function');
+  const page = ConfigCard({ view: 'page' });
+  assert.equal(page.type, 'div');
+  const summary = ConfigCard({ view: 'summary' });
+  assert.ok(summary, 'the summary view must render something');
 });
 
 test('apply announces the page on the document-relative bridge URL', async () => {
@@ -481,6 +505,9 @@ test('an empty poll answer does not spin the loop', async () => {
   // hello + a handful of polls; without the floor this would be hundreds.
   assert.ok(requests.length <= 8, `the loop spun: ${requests.length} requests in 300ms`);
 });
+
+
+
 
 
 
