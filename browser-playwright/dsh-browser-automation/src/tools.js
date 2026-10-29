@@ -273,7 +273,9 @@ export function createTools(runtime) {
         'Screenshots are for judging layout, spacing, overflow and colour; read text with browser_snapshot instead. ' +
         'SIDE EFFECT: Chromium only frames a sidebar tab that is on screen, so if this tab is not the visible one the ' +
         'plugin brings it to the front (expanding the right sidebar if it is collapsed) and leaves it there. ' +
-        'The image is the sidebar tab as the user sees it.',
+        'The image is the sidebar tab as the user sees it. ' +
+        'Fails immediately when the DSH window itself is minimized or off screen: a hidden window produces no frames, ' +
+        'so ask the user to keep the window visible for screenshot runs. Every tool that does not need pixels still works.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -724,6 +726,7 @@ export function readLocale(name) {
   const url = new URL(`../locale/${name}.json`, import.meta.url);
   return JSON.parse(readFileSync(url, 'utf8'));
 }
+
 
 
 

@@ -12,7 +12,7 @@ import { Runtime } from '../src/runtime.js';
 
 const PAGE_ID = 'dshpg-abcdef-01234567';
 
-function harness({ plan }) {
+function harness({ plan, hidden = false }) {
   const runtime = new Runtime({ config: { screenshotSettleMs: 0 } });
   const calls = [];
   const cli = {
@@ -37,6 +37,7 @@ function harness({ plan }) {
   runtime.bridge = {
     clientState: () => 'live',
     hasClient: () => true,
+    caps: () => ({ hidden: hidden === true }),
     request: async (kind) => (kind === 'prepare-capture' ? plan : {}),
   };
   return { runtime, calls };
@@ -83,4 +84,20 @@ test('a dead bridge still allows the cheap path', async () => {
   runtime.bridge = { clientState: () => 'stale', hasClient: () => false, request: async () => assert.fail('no bridge call expected') };
   await runtime.screenshot({ pageId: PAGE_ID });
   assert.deepEqual(calls, [['plain']]);
+});
+
+/**
+ * A minimized window has no frames at all, and every "is the tab visible" measurement
+ * still says yes (the layout is unchanged). The page half now reports document.hidden,
+ * so the capture can refuse immediately instead of timing out after 5s or 25s.
+ */
+test('a hidden window is refused before any command runs', async () => {
+  const { runtime, calls } = harness({ plan: { visible: true, tabId: 'tab7' }, hidden: true });
+  await assert.rejects(() => runtime.screenshot({ pageId: PAGE_ID }), (error) => {
+    assert.match(error.message, /no frames/);
+    assert.match(error.message, /browser_snapshot/);
+    assert.doesNotMatch(error.message, /Open the sidebar/);
+    return true;
+  });
+  assert.deepEqual(calls, [], 'no capture may be attempted');
 });

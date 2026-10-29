@@ -935,6 +935,11 @@ window.__ModuleLoader__.load({
           mounted,
           activeTabId,
           visibleUrl: visibleUrl(),
+          // Whether this window can produce pixels at all. A minimized (or otherwise
+          // hidden) window keeps its layout — innerWidth and the webview boxes are
+          // unchanged — so this flag is the only way the Host can tell "no frames"
+          // apart from "the tab is merely not the selected one".
+          hidden: typeof document.hidden === 'boolean' ? document.hidden : null,
           // One word for "which carrier is this": the custom scheme only exists in
           // Desktop, so it is also the answer to "can this window ever work".
           carrier: window.location.protocol === 'dsh-app:' ? 'desktop' : 'web',

@@ -12,6 +12,23 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * The one place that composes CLI access, the page registry and the DSH page
  * bridge. Tools are thin wrappers over these methods.
  */
+/**
+ * Why a hidden window can never be captured, and what still works.
+ *
+ * Measured on a minimized window: Chromium keeps the layout (the sidebar tab's box was
+ * 533x916 inside a 1920x1032 viewport, so every "is it visible" check said yes), but no
+ * frame is ever produced. `playwright screenshot` times out, `page.screenshot` times out,
+ * and raw CDP `Page.captureScreenshot` hangs forever instead of failing. Meanwhile
+ * snapshot, evaluate, click, reload and the bridge itself all keep working, and page
+ * timers are not throttled (setTimeout(1000) fired at 1010ms). So this is purely about
+ * pixels, and pretending otherwise with a generic "open the sidebar" hint wastes 5-25s.
+ */
+export const WINDOW_HIDDEN_MESSAGE =
+  'Nothing can be captured while the DSH window is minimized or otherwise off screen: Chromium produces no frames ' +
+  'for a hidden window, so every capture path times out (the CDP one hangs outright). Restore the window, keep it ' +
+  'visible for the duration of a screenshot run, and retry. Everything that does not need pixels still works — ' +
+  'browser_snapshot, browser_evaluate, browser_console and the click/fill/press tools.';
+
 export class Runtime {
   /**
    * @param {object} options
@@ -503,8 +520,13 @@ export class Runtime {
    * through Playwright's API with a deadline of our own.
    *
    * Per the user's decision, the sidebar is left on the captured tab afterwards.
+   *
+   * @param {{ pageId: string, fullPage?: boolean, target?: string, signal?: AbortSignal }} request
    */
   async screenshot(request) {
+    // Fail in microseconds instead of burning the capture deadline: a hidden window is
+    // knowable before any command runs, and no amount of focusing changes it.
+    if (this.bridge?.caps?.()?.hidden === true) throw new Error(WINDOW_HIDDEN_MESSAGE);
     const driver = this.ensureDriver();
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const file = path.join(driver.cli.workdir(), `screenshot-${stamp}.png`);
@@ -551,6 +573,9 @@ export class Runtime {
           }
         } catch (error) {
           if (/Timeout/i.test(error.message)) {
+            // The window can go away between the check above and the capture (a test
+            // run starts, the user minimizes): same cause, same precise answer.
+            if (this.bridge?.caps?.()?.hidden === true) throw new Error(WINDOW_HIDDEN_MESSAGE);
             const hint =
               plan.visible === false
                 ? plan.tabId
@@ -973,5 +998,6 @@ export function requireBridge(bridge, tool) {
 }
 
 export { sessionTag, resolveIndex };
+
 
 

@@ -368,6 +368,22 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
   `playwright-cli list` / `playwright-cli -s=dsh detach` 后重试。
 - 侧边栏最多两个水平 pane，窄窗口下开页会进入全屏浮层——这是 DSH 的行为，插件不改。
 
+### 7.1 窗口可见性矩阵（最小化时还能做什么）
+
+实测环境：DSH 窗口**最小化**（Win32 `IsIconic` 为真，前后各验证一次），页面自述 `document.hidden: true`，
+应用视口仍是 1920×1032、侧边栏 webview 仍是 533×916（**布局不变**，所以"盒子在视口内"这类判据全部为真）。
+
+| 能力 | 最小化时 | 说明 |
+|---|---|---|
+| 页面桥 / 命令下发 | ✅ | 客户端持续轮询，`browser_open`/`close` 都能送达 |
+| `browser_snapshot` / `evaluate` / `console` | ✅ | 纯 DOM / JS 计算，不需要绘制 |
+| `browser_click` / `fill` / `press` / `goto` / `reload` | ✅ | DOM 级派发；实测 `setTimeout(1000)` 实际 1010ms、两帧 rAF 8ms，**没有节流** |
+| `browser_claim` | ✅（但用户看不见） | 判据看布局盒子，最小化不改变它；语义上没问题，因为 user 是"先看到页面才会要求 claim" |
+| **`browser_screenshot`** | ❌ **立即报错** | 隐藏窗口不产生任何帧：CLI 截图 5s 超时、`page.screenshot` 8s 超时、raw CDP `Page.captureScreenshot` **无限挂起**；`page.bringToFront()` **不能**还原最小化窗口 |
+
+因此插件在截图前会先读页面侧上报的 `document.hidden`：为真就**毫秒级**拒绝并说明原因，
+而不是白等 5–25 秒。**"无人值守 + 关键处截图"必须让窗口保持可见**（可以不聚焦，但不要最小化）。
+
 ---
 
 ## 8. 自测

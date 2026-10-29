@@ -252,6 +252,22 @@ export class Bridge {
     this.queue = [];
   }
 
+  /**
+   * The capabilities of the most recently heard client, flat.
+   *
+   * Used where the answer has to be read on every call rather than rendered, e.g.
+   * "is this window able to produce frames at all" before a screenshot.
+   *
+   * @returns {Record<string, unknown>}
+   */
+  caps() {
+    let latest = null;
+    for (const record of this.clients.values()) {
+      if (!latest || record.seenAt >= latest.seenAt) latest = record;
+    }
+    return (latest && latest.capabilities) || {};
+  }
+
   /** Diagnostics for `browser_status`. */
   snapshot() {
     return {
@@ -270,6 +286,7 @@ export class Bridge {
           mounted: caps.mounted ?? null,
           activeTabId: caps.activeTabId ?? null,
           visibleUrl: caps.visibleUrl ?? null,
+          hidden: caps.hidden ?? null,
         };
       }),
       pendingRequests: this.pending.size,
