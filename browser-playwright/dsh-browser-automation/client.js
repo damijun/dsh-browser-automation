@@ -135,7 +135,7 @@ window.__ModuleLoader__.load({
         'cfg.save': 'Save',
         'cfg.saving': 'Saving…',
         'cfg.saved': 'Written to the profile patch. Re-enable this plugin (or restart DSH) to apply it.',
-        'cfg.reset': 'Reset to default.',
+        'cfg.reset': 'Reset to default. Re-enable this plugin (or restart DSH) to apply it.',
         'cfg.resetField': 'Reset',
         'cfg.readOnly':
           'Read-only: this host does not serve the settings form. Edit cordis.patch.yml in the profile to change these values.',
@@ -208,7 +208,7 @@ window.__ModuleLoader__.load({
         'cfg.save': '保存',
         'cfg.saving': '保存中…',
         'cfg.saved': '已写入 profile patch。重新启用本插件或重启 DSH 后生效。',
-        'cfg.reset': '已恢复默认值。',
+        'cfg.reset': '已恢复默认值。重新启用本插件或重启 DSH 后生效。',
         'cfg.resetField': '恢复默认',
         'cfg.readOnly': '只读：当前宿主没有提供设置表单。要改这些值，请编辑 profile 里的 cordis.patch.yml。',
         'cfg.noService': '没有 configForms 服务',
@@ -554,6 +554,13 @@ window.__ModuleLoader__.load({
       '.dshcfg-primary{border:0;border-radius:7px;background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base);',
       'font:inherit;font-weight:600;padding:6px 16px;cursor:pointer}',
       '.dshcfg-primary:disabled{opacity:.45;cursor:default}',
+      // A secondary button (the per-field "reset"), so it reads as an action rather
+      // than as a link sitting next to the value.
+      '.dshcfg-btn{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);',
+      'color:inherit;border-radius:6px;font:inherit;padding:3px 9px;cursor:pointer}',
+      '.dshcfg-btn:hover:not(:disabled){border-color:var(--dsw-alias-border-l2)}',
+      '.dshcfg-btn:disabled{opacity:.5;cursor:default}',
+      '.dshcfg-btn-sm{padding:2px 9px;font-size:11px;border-radius:5px}',
       '.dshcfg-err{border:1px solid var(--dsw-alias-state-error-primary);border-radius:8px;padding:8px;',
       'color:var(--dsw-alias-state-error-primary);white-space:pre-wrap;margin:8px 0 4px}',
       '.dshcfg-note{color:var(--dsw-alias-state-success-primary);font-size:11.5px}',
@@ -602,12 +609,33 @@ window.__ModuleLoader__.load({
           open: true,
         });
         const alive = React.useRef(true);
+        const noteTimer = React.useRef(null);
         React.useEffect(
           () => () => {
             alive.current = false;
+            if (noteTimer.current) clearTimeout(noteTimer.current);
           },
           [],
         );
+
+        /**
+         * Show a short-lived result line ("saved", "reset").
+         *
+         * Both are writes to the patch, so both need the same re-enable/restart hint;
+         * the text used to stay on screen after a reset, which read as a permanent
+         * state rather than a one-off confirmation.
+         *
+         * @param {string} text
+         */
+        const flashNote = React.useCallback((text) => {
+          if (!alive.current) return;
+          if (noteTimer.current) clearTimeout(noteTimer.current);
+          setState((previous) => ({ ...previous, note: text }));
+          noteTimer.current = setTimeout(() => {
+            noteTimer.current = null;
+            if (alive.current) setState((previous) => ({ ...previous, note: null }));
+          }, 6_000);
+        }, []);
 
         const load = React.useCallback(async () => {
           try {
@@ -656,9 +684,8 @@ window.__ModuleLoader__.load({
               }
               await call('config-set', { key, value }, 20_000);
             }
-            if (alive.current) {
-              setState((previous) => ({ ...previous, dirty: {}, phase: 'ready', note: t('cfg.saved') }));
-            }
+            if (alive.current) setState((previous) => ({ ...previous, dirty: {}, phase: 'ready' }));
+            flashNote(t('cfg.saved'));
             await load();
           } catch (failure) {
             if (alive.current) setState((previous) => ({ ...previous, phase: 'ready', error: failure.message }));
@@ -669,7 +696,18 @@ window.__ModuleLoader__.load({
           if (!state.writable) return;
           try {
             await call('config-reset', { key }, 20_000);
-            if (alive.current) setState((previous) => ({ ...previous, note: t('cfg.reset') }));
+            // Drop this key's draft too: keeping it would show the typed value again
+            // right after the reset and re-save it on the next click.
+            if (alive.current) {
+              setState((previous) => {
+                const nextDirty = { ...previous.dirty };
+                delete nextDirty[key];
+                return { ...previous, dirty: nextDirty, error: null };
+              });
+            }
+            // A reset is a write like any other: it lands in the patch and needs the
+            // same re-enable/restart, so it says so instead of staying silent.
+            flashNote(t('cfg.reset'));
             await load();
           } catch (failure) {
             if (alive.current) setState((previous) => ({ ...previous, error: failure.message }));
@@ -769,7 +807,7 @@ window.__ModuleLoader__.load({
                         h('div', { key: 'name', className: 'dshcfg-row-name' }, [
                           h('span', { key: 'label', className: 'dshcfg-label' }, t(`cfg.field.${field.key}`)),
                           overridden
-                            ? h('span', { key: 'badge', className: 'dshcfg-badge' }, t('cfg.overridden'))
+                            ? h('span', { key: 'badge', className: 'dshcfg-desc' }, t('cfg.overridden'))
                             : null,
                           overridden
                             ? h(
@@ -777,7 +815,7 @@ window.__ModuleLoader__.load({
                                 {
                                   key: 'reset',
                                   type: 'button',
-                                  className: 'dshcfg-link',
+                                  className: 'dshcfg-btn dshcfg-btn-sm',
                                   disabled: busy || !state.writable,
                                   onClick: () => reset(field.key),
                                 },
@@ -1280,6 +1318,8 @@ window.__ModuleLoader__.load({
     };
   },
 });
+
+
 
 
 

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   EDITABLE_KEYS,
   applyConfigChange,
+  composeConfigValues,
   coerceConfigValue,
   findRow,
   resetConfigKey,
@@ -57,6 +58,25 @@ test('values are validated and converted by their declared type', () => {
   assert.equal(coerceConfigValue('timeoutMs', -1).ok, false);
   assert.equal(coerceConfigValue('session', '   ').ok, false);
   assert.equal(coerceConfigValue('debug', 'yes').ok, false);
+});
+
+/**
+ * The card must show the configuration the patch describes, not the one the running
+ * instance booted with: a write only reaches the patch, so reading the booted copy
+ * made the UI snap back to the old value right after a save.
+ */
+test('the patch view stacks base, inherited and override in that order', () => {
+  assert.deepEqual(
+    composeConfigValues({
+      base: { a: 1, b: 1 },
+      inherited: { b: 2, c: 2 },
+      override: { c: 3, d: 3 },
+    }),
+    { a: 1, b: 2, c: 3, d: 3 },
+  );
+  // Missing or malformed layers degrade to the base instead of throwing.
+  assert.deepEqual(composeConfigValues({ base: { a: 1 } }), { a: 1 });
+  assert.deepEqual(composeConfigValues(), {});
 });
 
 test('a write keeps the other overrides and never materialises the inherited layer', async () => {
@@ -117,6 +137,7 @@ test('a missing row or a bad value fails with a readable reason', async () => {
   assert.equal(findRow(editor, 'browser-automation'), null);
   assert.equal(findRow({ entries: () => { throw new Error('boom'); } }, 'x'), null);
 });
+
 
 
 

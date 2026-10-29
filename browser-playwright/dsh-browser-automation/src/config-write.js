@@ -25,6 +25,24 @@ export const EDITABLE_KEYS = {
   debug: 'boolean',
 };
 
+/**
+ * The configuration the patch describes: schema/bundle values with the profile
+ * override on top.
+ *
+ * The settings card shows this, not the values the running instance booted with. A
+ * write only reaches the profile patch and the Loader re-applies it later, so reading
+ * the booted copy made the card snap back to the old value right after a save.
+ *
+ * @param {{ base?: Record<string, unknown>, inherited?: Record<string, unknown>, override?: Record<string, unknown> }} [layers]
+ * @returns {Record<string, unknown>}
+ */
+export function composeConfigValues(layers = {}) {
+  const base = layers.base && typeof layers.base === 'object' ? layers.base : {};
+  const inherited = layers.inherited && typeof layers.inherited === 'object' ? layers.inherited : {};
+  const override = layers.override && typeof layers.override === 'object' ? layers.override : {};
+  return { ...base, ...inherited, ...override };
+}
+
 /** @param {string} key */
 const kindOf = (key) => (Object.hasOwn(EDITABLE_KEYS, key) ? EDITABLE_KEYS[key] : undefined);
 
@@ -139,6 +157,7 @@ export async function resetConfigKey({ editor, rowId, fiber, key }) {
     return next;
   });
 }
+
 
 
 

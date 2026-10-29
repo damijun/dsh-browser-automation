@@ -1,6 +1,6 @@
 import { Bridge, readJsonBody } from './src/bridge.js';
 import { Config, cdpPortOf } from './src/config.js';
-import { applyConfigChange, findRow, resetConfigKey } from './src/config-write.js';
+import { applyConfigChange, composeConfigValues, findRow, resetConfigKey } from './src/config-write.js';
 import { Runtime } from './src/runtime.js';
 import { createTools } from './src/tools.js';
 
@@ -255,9 +255,15 @@ async function serve({ request, response, runtime, bridge, settings, log, config
   try {
     switch (action) {
       case 'config': {
-        // The settings card's read path: what this row is actually running with,
-        // whether the Host can write it back, and — when it cannot — why not.
-        const values = runtime.config?.effective ?? {};
+        // The settings card's read path: the configuration the patch describes, not the
+        // one this instance booted with.
+        //
+        // A write only reaches the profile patch; the running row keeps its booted
+        // values until the Loader re-applies it (which needs a re-enable or a restart).
+        // Reporting the booted copy made the card snap back to the old value after every
+        // save, so the base here is the patch truth: schema/bundle values for this row
+        // (the booted copy is the fallback for keys the layers do not mention) with the
+        // profile override on top.
         const editor = configEditor();
         let reason = null;
         let row = null;
@@ -282,16 +288,20 @@ async function serve({ request, response, runtime, bridge, settings, log, config
         // The override layer, so the card can badge and reset exactly the keys this
         // profile decided on instead of guessing from the values.
         let overrides = {};
+        let inherited = {};
         if (row) {
           try {
             const layer = (editor.configuration() ?? []).find(
               (entry) => entry && (entry.entry === row || entry.entry?.id === row.id),
             );
             if (layer && layer.override && typeof layer.override === 'object') overrides = { ...layer.override };
+            if (layer && layer.inherited && typeof layer.inherited === 'object') inherited = { ...layer.inherited };
           } catch {
             overrides = {};
+            inherited = {};
           }
         }
+        const values = composeConfigValues({ base: runtime.config?.effective, inherited, override: overrides });
         reply(response, 200, {
           ok: true,
           value: { values, packageName: PACKAGE_NAME, rowId: ROW_ID, editable: Boolean(row), reason, overrides },
@@ -410,6 +420,7 @@ function reply(response, status, body) {
   response.writeHead(status, { 'content-length': Buffer.byteLength(text) });
   response.end(text);
 }
+
 
 
 

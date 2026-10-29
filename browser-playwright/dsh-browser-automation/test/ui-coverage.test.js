@@ -46,3 +46,18 @@ test('the panel actually renders the startup attach line', () => {
   assert.match(source, /key: 'auto', className: 'dshba-row'/);
   assert.match(source, /'panel\.autoAttach'/);
 });
+
+test('reset is a button and the overridden marker is plain text', () => {
+  // The row used to render both as links: the reset read as a label and the badge as
+  // a control. The requirement is the other way round.
+  assert.match(source, /className: 'dshcfg-btn dshcfg-btn-sm'/);
+  assert.match(source, /key: 'badge', className: 'dshcfg-desc'/);
+});
+
+test('both a save and a reset report that a re-enable is needed, briefly', () => {
+  // A reset used to be silent, and its note stayed on screen forever.
+  assert.match(source, /flashNote\(t\('cfg\.saved'\)\)/);
+  assert.match(source, /flashNote\(t\('cfg\.reset'\)\)/);
+  assert.match(source, /noteTimer\.current = setTimeout/);
+  assert.match(source, /cfg\.reset': '[^']*Re-enable this plugin/);
+});
