@@ -118,7 +118,8 @@ export class Runtime {
         throw new Error(
           `A sidebar tab was opened for ${url}, but it never appeared in playwright-cli's tab list. ` +
             'The page may have failed to load (or the sidebar is showing an error). ' +
-            'Check the sidebar, then use browser_list to see what is reachable.',
+            'Check the sidebar, then use browser_list to see what is reachable.' +
+            localFileHint(url),
         );
       }
       await this.cli.run(['--raw', 'tab-select', String(found.index)]);
@@ -541,9 +542,10 @@ export class Runtime {
    *
    * The DSH application page is not reloadable from here, and not by policy alone:
    * it has no `pageId` (the marker is only ever installed on pages the plugin opened
-   * or claimed), so it cannot be addressed in the first place; `requireBrowserTab`
-   * then refuses any target whose URL is not http(s), which covers a marker that
-   * somehow ended up on an application-scheme tab.
+   * or claimed), so it cannot be addressed in the first place; `refuseApplicationTab`
+   * then refuses any target on the application scheme, which covers a marker that
+   * somehow ended up on `dsh-app:`. Other schemes (`file:`, `data:`) are allowed:
+   * the test subject is not the thing to restrict.
    *
    * @param {{ pageId: string, signal?: AbortSignal }} request
    */
@@ -551,7 +553,7 @@ export class Runtime {
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
-        const target = requireBrowserTab(tab, 'browser_reload');
+        const target = refuseApplicationTab(tab, 'browser_reload');
         const result = await driver.reload(request.pageId, tab);
         const url = result.url ?? target.url;
         this.manager.update(request.pageId, { url, title: result.title ?? target.title });
@@ -699,8 +701,12 @@ export function normalizeUrl(raw) {
   if (url.username !== '' || url.password !== '') {
     throw new Error('url must not embed credentials');
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`the sidebar browser only opens http and https URLs (got ${url.protocol})`);
+  // The plugin does not restrict the test subject: `file:` is accepted here and the
+  // platform decides. DSH's own sidebar browser rejects `file:`/`data:`/`blob:` and
+  // owns local files through Document Preview, so a `file:` URL surfaces as "never
+  // appeared in the tab list" — `localFileHint` turns that into the workaround.
+  if (!['http:', 'https:', 'file:'].includes(url.protocol)) {
+    throw new Error(`the sidebar browser only opens http, https and file URLs (got ${url.protocol})`);
   }
   return url.href;
 }
@@ -730,25 +736,48 @@ export function samePage(a, b) {
 }
 
 /**
- * Refuse an operation that only makes sense on a sidebar web page.
+ * Extra explanation when a local-file URL is the reason an open failed.
  *
- * Two independent reasons the DSH application page must never be the target of a
- * reload: it has no `pageId` (the marker is only installed on opened/claimed pages,
- * so it cannot be addressed), and this guard, which rejects any resolved tab whose
- * URL is not http(s) — covering a marker that leaked onto an application-scheme tab.
- * Reloading the application is exactly what took the window down by hand.
+ * The sidebar browser's own address parser accepts HTTP/HTTPS (loopback included) and
+ * rejects `file:`, script/data/blob and the application origin; local files belong to
+ * Document Preview. Rather than pre-empting that rule in the plugin, this turns the
+ * platform's silent failure into the workaround the user actually needs.
+ *
+ * @param {string} rawUrl
+ */
+export function localFileHint(rawUrl) {
+  const scheme = String(rawUrl ?? '').split(':')[0].toLowerCase();
+  if (scheme !== 'file' && scheme !== 'data' && scheme !== 'blob') return '';
+  return (
+    `\n"${scheme}:" is refused by the DSH sidebar browser itself (its address parser accepts http/https only; ` +
+    'local files belong to Document Preview). To test a local page, serve its directory over loopback and open ' +
+    'http://127.0.0.1:<port>/<file>: e.g. `python -m http.server 8000` in that directory.'
+  );
+}
+
+/**
+ * Refuse to touch the DSH application page itself.
+ *
+ * The only target that must never be reached is the application: reloading it takes
+ * the whole window down. Everything else a sidebar tab can show is fair game —
+ * `http(s)`, `file:` for local static pages, `data:`, anything the webview loaded —
+ * because restricting the *test subject* to protect the shell would defeat the
+ * point of the tool.
+ *
+ * This is the second line of defence, not the first: the application page has no
+ * `pageId` at all (markers are only installed on opened or claimed pages), so it
+ * cannot be addressed. This guard covers a marker that somehow leaked onto an
+ * application-scheme tab.
  *
  * @param {{ url?: string, title?: string }} tab
  * @param {string} [tool]
  */
-export function requireBrowserTab(tab, tool = 'this tool') {
+export function refuseApplicationTab(tab, tool = 'this tool') {
   const url = String(tab?.url ?? '');
-  if (!/^https?:/i.test(url)) {
-    const scheme = url.split(':')[0] || 'unknown';
+  if (/^dsh-app:/i.test(url)) {
     throw new Error(
-      `${tool} can only act on a sidebar browser page (http/https), but this page handle resolves to ` +
-        `"${scheme}:". The DSH application page is not reloadable from here: it has no pageId, and reloading it ` +
-        'restarts the whole window. Nothing was reloaded.',
+      `${tool} cannot act on the DSH application page (dsh-app:). That page has no pageId and reloading it ` +
+        'restarts the whole window. Nothing was executed.',
     );
   }
   return tab;
@@ -796,3 +825,4 @@ export function requireBridge(bridge, tool) {
 }
 
 export { sessionTag, resolveIndex };
+

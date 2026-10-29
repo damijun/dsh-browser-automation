@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Runtime, requireBrowserTab } from '../src/runtime.js';
+import { Runtime, localFileHint, refuseApplicationTab } from '../src/runtime.js';
 
 /**
  * `browser_reload` exists because reloading the DSH application page by hand took the
@@ -54,18 +54,42 @@ test('reload refuses the DSH application page even if a marker points at it', as
   // the second guard exists for — a marker that leaked onto the application.
   const { runtime, calls } = harness({ url: 'dsh-app://app/' });
   await assert.rejects(() => runtime.reload({ pageId: PAGE_ID }), (error) => {
-    assert.match(error.message, /can only act on a sidebar browser page/);
-    assert.match(error.message, /application page is not reloadable/);
+    assert.match(error.message, /cannot act on the DSH application page/);
+    assert.match(error.message, /restarts the whole window/);
     return true;
   });
   assert.deepEqual(calls, [], 'nothing may run against the application page');
 });
 
-test('the guard names the scheme and never touches a non-http target', () => {
-  for (const url of ['dsh-app://app/', 'file:///c:/x.txt', 'data:text/html,hi', 'chrome://gpu', '']) {
-    assert.throws(() => requireBrowserTab({ url }, 'browser_reload'), /http\/https/);
+/**
+ * The guard refuses the shell, not the test subject: a local static page over
+ * ile: (or a data: document) is a legitimate target and must stay reachable.
+ */
+test('the guard refuses only the application scheme, not other test subjects', () => {
+  assert.throws(() => refuseApplicationTab({ url: 'dsh-app://app/' }, 'browser_reload'), /dsh-app:/);
+  assert.throws(() => refuseApplicationTab({ url: 'dsh-app://app/index.html' }, 'browser_reload'), /dsh-app:/);
+
+  for (const url of [
+    'file:///C:/Users/damijun/IdeaProjects/tool_calling/src/main/resources/static/index.html',
+    'data:text/html,<h1>hi</h1>',
+    'http://127.0.0.1:9222/json',
+    'https://example.test/',
+  ]) {
+    assert.equal(refuseApplicationTab({ url }, 'browser_reload').url, url);
   }
-  assert.equal(requireBrowserTab({ url: 'http://127.0.0.1:9222/json' }).url, 'http://127.0.0.1:9222/json');
+});
+
+/**
+ * ile: is rejected by the sidebar browser itself, not by this plugin. The hint has
+ * to say so and name the workaround, otherwise the failure reads as a plugin bug.
+ */
+test('a local-file failure explains the platform rule and the workaround', () => {
+  const hint = localFileHint('file:///C:/Users/damijun/IdeaProjects/tool_calling/index.html');
+  assert.match(hint, /refused by the DSH sidebar browser itself/);
+  assert.match(hint, /python -m http\.server/);
+  assert.match(localFileHint('data:text/html,hi'), /"data:"/);
+  assert.equal(localFileHint('https://example.com/'), '');
+  assert.equal(localFileHint('http://127.0.0.1:8000/x.html'), '');
 });
 
 test('a pageId that resolves to nothing fails before any reload', async () => {
@@ -87,3 +111,5 @@ test('a pageId that resolves to nothing fails before any reload', async () => {
   await assert.rejects(() => runtime.reload({ pageId: PAGE_ID }), /PAGE_NOT_FOUND/);
   assert.equal(reloaded, false);
 });
+
+

@@ -404,8 +404,14 @@ test('normalizeUrl applies the sidebar browser rules', () => {
   assert.equal(normalizeUrl('  http://localhost:3000/x  '), 'http://localhost:3000/x');
   assert.equal(normalizeUrl('localhost:3000/x'), 'https://localhost:3000/x');
   assert.throws(() => normalizeUrl(''), /must not be empty/);
-  assert.throws(() => normalizeUrl('file:///etc/passwd'), /only opens http and https/);
-  assert.throws(() => normalizeUrl('javascript:alert(1)'), /only opens http and https/);
+  // A local static page is a legitimate test subject; only the application scheme and
+  // other non-document schemes are refused.
+  assert.equal(
+    normalizeUrl('file:///C:/Users/damijun/IdeaProjects/x/index.html'),
+    'file:///C:/Users/damijun/IdeaProjects/x/index.html',
+  );
+  assert.throws(() => normalizeUrl('javascript:alert(1)'), /only opens http, https and file/);
+  assert.throws(() => normalizeUrl('dsh-app://app/'), /only opens http, https and file/);
   assert.throws(() => normalizeUrl('https://user:pass@example.com/'), /must not embed credentials/);
 });
 

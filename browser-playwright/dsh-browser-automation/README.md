@@ -65,7 +65,7 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
 | `browser_goto {pageId, url}` | 导航；标记由 init script 自动续上，并再应用一次确认 |
-| `browser_reload {pageId}` | 重新加载该页（同 URL 新加载）。**永远够不到 DSH 应用页**：应用页没有 pageId，且非 http(s) 目标在发命令前就被拒 |
+| `browser_reload {pageId}` | 重新加载该页（同 URL 新加载）。**永远够不到 DSH 应用页**：应用页没有 pageId，且 `dsh-app:` 目标在发命令前就被拒（`file:` 由 DSH 侧拒绝，见 §7） |
 | `browser_evaluate {pageId, expression}` | 求值，结果是 `JSON.stringify`（表达式必须是单表达式或 IIFE） |
 | `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它） |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
@@ -332,7 +332,10 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
 - **页面自己改标题**后标记会在 ~60ms 内补回；若某个页面在标记补回前被 `tab-list` 读到，会得到
   `PAGE_NOT_FOUND`，重试一次即可。
 - `browser_evaluate` 的表达式被 CLI 包成 `() => (expr)`，**语句列表会语法错误**，要用 IIFE。
-- 侧边栏浏览器本身拒绝 `file:` / `data:` / 带凭据的 URL、以及和 DSH 应用同源的地址；插件在 Host 侧提前拦截并给出原因。
+- **插件不额外限制 scheme**（只拒 `dsh-app:`），但**平台是有约束的**：DSH 侧边栏浏览器自己的地址解析器只接受 `http`/`https`（含 loopback），
+  拒绝 `file:`/`data:`/`blob:`、内嵌凭据和应用同源地址，本地文件归**文档预览**（依据 `dsh-client-ui-sidebar-browser` README 的 Protocol policy）。
+  要测本地页面：在该目录起一个 loopback 服务（`python -m http.server 8000`）再打开 `http://127.0.0.1:8000/<file>` —— `browser_open` 失败时会把这句提示带上。
+- 唯一被拦的是**应用自己的 scheme**（`dsh-app:`）和带凭据的 URL；插件在 Host 侧提前拦截并给出原因。
 - `playwright-cli attach` 在 Windows 偶发卡住/守护进程竞争：超时 60s + 一次重试；仍失败建议
   `playwright-cli list` / `playwright-cli -s=dsh detach` 后重试。
 - 侧边栏最多两个水平 pane，窄窗口下开页会进入全屏浮层——这是 DSH 的行为，插件不改。
@@ -362,7 +365,7 @@ node --test
   `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/找不到 chip/toggle 抛错"五种情况下的动作序列、
   `close-page` 真的调 `close(tabId)`、**collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、
   失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
-- **重载边界**：`browser_reload` 只接受解析到 http(s) 页的目标，且**先在 CLI 里选中该页再 reload**（`reload` 作用在 current tab 上）；
+- **重载边界**：`browser_reload` 只拒 `dsh-app:`（应用页），`file:`/`data:`/http(s) 一律放行；且**先在 CLI 里选中该页再 reload**（`reload` 作用在 current tab 上）；
   伪造一个把标记挂到 `dsh-app://` 页的情况，必须报错且**不执行任何命令**；pageId 解析失败时也不 reload；
 - **配置读写**：Config 的 8 个字段必须全部 `.volatile()`（否则表单看不到），默认值与 README 一致，profile 覆盖经引用读取；
   写入只落 override 层（对照组：行内 `current` 已含 bundle 默认值，合并它会冻结默认值），`include:` 前缀的行 id 要能匹配，
@@ -459,6 +462,8 @@ node --test
 - `files` 只含运行时文件；`docs/` 会一起发出去（`docs/concurrency-fix.md` 是待办规格，可留可去）。
 - 发布前跑 `npm test`（99 用例）。
 - 标题/描述/图标来自 `locale/{en,zh}.json` 与 `icon.svg`（矢量，插件页当封面用）。
+
+
 
 
 

@@ -53,7 +53,7 @@ export function createTools(runtime) {
     {
       name: 'browser_open',
       description:
-        'Open an HTTP(S) URL in a new DSH right-sidebar browser tab and take control of it. ' +
+        'Open an http(s) or file URL in a new DSH right-sidebar browser tab and take control of it. ' +
         'This is one of exactly two ways to start work: it creates a real sidebar tab through the DSH UI, ' +
         'so the user can see the page and keep using it. Use browser_claim instead when the user already ' +
         'has the page they want open. ' +
@@ -65,7 +65,7 @@ export function createTools(runtime) {
         type: 'object',
         additionalProperties: false,
         properties: {
-          url: string('Absolute http(s) URL. A bare host becomes https://<host>.'),
+          url: string('Absolute http(s) or file URL. A bare host becomes https://<host>.'),
           waitMs: integer('How long to wait for the tab to become reachable, in milliseconds. Defaults to 15000.'),
         },
         required: ['url'],
@@ -435,7 +435,7 @@ export function createTools(runtime) {
         additionalProperties: false,
         properties: {
           pageId: string('Page handle.'),
-          url: string('Absolute http(s) URL.'),
+          url: string('Absolute http(s) or file URL.'),
         },
         required: ['pageId', 'url'],
       },
@@ -463,8 +463,9 @@ export function createTools(runtime) {
       name: 'browser_reload',
       description:
         'Reload one sidebar browser page by pageId (same URL, fresh load). ' +
-        'It can never reload the DSH application page: the application has no pageId, and a target that is not an ' +
-        'http(s) page is refused before any command runs. Use it when a page looks stale, and prefer it over ' +
+        'It can never reload the DSH application page: the application has no pageId, and a target on the app scheme ' +
+        '(dsh-app:) is refused before any command runs. Any other scheme, including file:, is allowed. Use it when a ' +
+        'page looks stale, and prefer it over ' +
         'browser_goto with the same URL.',
       parameters: {
         type: 'object',
@@ -708,3 +709,4 @@ export function readLocale(name) {
   const url = new URL(`../locale/${name}.json`, import.meta.url);
   return JSON.parse(readFileSync(url, 'utf8'));
 }
+
