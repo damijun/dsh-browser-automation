@@ -173,6 +173,9 @@ window.__ModuleLoader__.load({
         'cfg.desc.screenshotTimeoutMs': 'Deadline for one screenshot capture.',
         'cfg.desc.screenshotSettleMs': 'Wait for a first frame after focusing a hidden tab.',
         'cfg.desc.debug': 'Print bridge and CLI diagnostics to the host log.',
+        'cfg.field.autoAttach': 'Attach at startup',
+        'cfg.desc.autoAttach':
+          'Attach once when DSH starts, so sidebar pages opened afterwards are visible to the CLI. Costs one daemon process while DSH runs; only one DSH instance at a time.',
       },
       zh: {
         'panel.title': '浏览器自动化',
@@ -242,6 +245,9 @@ window.__ModuleLoader__.load({
         'cfg.desc.screenshotTimeoutMs': '单次截图抓取的最长等待。',
         'cfg.desc.screenshotSettleMs': '把隐藏标签页切到前台后，等首帧的时间。',
         'cfg.desc.debug': '把桥与 CLI 诊断打印到宿主日志。',
+        'cfg.field.autoAttach': '开机自动连接',
+        'cfg.desc.autoAttach':
+          'DSH 启动时先 attach 一次，之后打开的侧边栏页面才能被 CLI 看见。代价是运行期间常驻一个 daemon 进程；同时只能有一个 DSH 实例。',
       },
     };
 
@@ -335,9 +341,12 @@ window.__ModuleLoader__.load({
         const sessionId = props && props.sessionId;
         const [state, setState] = React.useState({ phase: 'loading', data: null, error: null, busy: null });
         const alive = React.useRef(true);
+        const settleTimer = React.useRef(null);
+        const settleRetries = React.useRef(0);
         React.useEffect(
           () => () => {
             alive.current = false;
+            if (settleTimer.current) clearTimeout(settleTimer.current);
           },
           [],
         );
@@ -351,7 +360,19 @@ window.__ModuleLoader__.load({
             setState((previous) => ({ ...previous, phase: 'loading', busy: action ?? 'status' }));
             call('status', { sessionId, action: action ?? 'status' }, 30_000)
               .then((data) => {
-                if (alive.current) setState({ phase: 'ready', data, error: null, busy: null });
+                if (!alive.current) return;
+                setState({ phase: 'ready', data, error: null, busy: null });
+                // A panel restored at boot can read the status while the startup attach
+                // is still retrying, which would leave "connecting…" on screen forever.
+                // Check back until it settles (bounded).
+                const pending = data && data.autoAttach && data.autoAttach.ok === null && !data.autoAttach.skipped;
+                if (pending && settleRetries.current < 5 && !settleTimer.current) {
+                  settleRetries.current += 1;
+                  settleTimer.current = setTimeout(() => {
+                    settleTimer.current = null;
+                    load();
+                  }, 2_000);
+                }
               })
               .catch((error) => {
                 if (alive.current) {
@@ -401,6 +422,12 @@ window.__ModuleLoader__.load({
               dot(bridge.state === 'live', dash(bridge.state)),
               h('span', { key: 'c', className: 'dshba-tag' }, `${(bridge.clients || []).length} ${t('panel.clients')}`),
               h('span', { key: 'p', className: 'dshba-tag' }, `${bridge.heldPolls ?? 0} ${t('panel.polls')}`),
+            ]),
+            // The startup attach decides whether a page the user opens afterwards is
+            // drivable at all, so its outcome gets a visible line — including failure.
+            h('div', { key: 'auto', className: 'dshba-row' }, [
+              h('span', { key: 'k' }, t('panel.autoAttach')),
+              autoAttachLine(data && data.autoAttach, t),
             ]),
             data && data.bridgeError
               ? h('div', { key: 'be', className: 'dshba-warn dshba-mono' }, String(data.bridgeError))
@@ -481,6 +508,7 @@ window.__ModuleLoader__.load({
       { key: 'requestTimeoutMs', kind: 'number' },
       { key: 'screenshotTimeoutMs', kind: 'number' },
       { key: 'screenshotSettleMs', kind: 'number' },
+      { key: 'autoAttach', kind: 'boolean' },
       { key: 'debug', kind: 'boolean' },
     ];
 
@@ -549,7 +577,8 @@ window.__ModuleLoader__.load({
             { value: 'custom', label: t('cfg.custom'), picked: picked === 'custom' },
           ];
         }
-        if (key === 'debug') {
+        // Every boolean field renders as the same on/off pair.
+        if (key === 'debug' || key === 'autoAttach') {
           const on = value === true;
           return [
             { value: false, label: t('cfg.off'), picked: !on },
@@ -1251,6 +1280,7 @@ window.__ModuleLoader__.load({
     };
   },
 });
+
 
 
 
