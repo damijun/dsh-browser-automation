@@ -492,20 +492,20 @@ test('a command that a page never answers is re-queued for the next poll', async
 test('a poll can refresh capabilities without a new welcome', () => {
   const bridge = new Bridge({ pollTimeoutMs: 100, requestTimeoutMs: 100 });
   bridge.hello('client-1', { mounted: null, hasSidebarRight: true });
-  assert.equal(bridge.snapshot().clients[0].capabilities.mounted, null);
+  assert.equal(bridge.snapshot().clients[0].mounted, null);
 
-  bridge.note('client-1', { mounted: 'session-1', visible: { url: 'https://a.test/' } });
-  const capabilities = bridge.snapshot().clients[0].capabilities;
-  assert.equal(capabilities.mounted, 'session-1');
-  assert.equal(capabilities.visible.url, 'https://a.test/');
+  bridge.note('client-1', { mounted: 'session-1', visibleUrl: 'https://a.test/' });
+  const client = bridge.snapshot().clients[0];
+  assert.equal(client.mounted, 'session-1');
+  assert.equal(client.visibleUrl, 'https://a.test/');
   // The rest of the announcement survives; a poll only overrides what it carries.
-  assert.equal(capabilities.hasSidebarRight, true);
+  assert.equal(client.hasSidebarRight, true);
 
   // An unknown client, or an empty refresh, changes nothing.
   bridge.note('client-2', { mounted: 'session-2' });
   bridge.note('client-1', {});
   assert.equal(bridge.snapshot().clients.length, 1);
-  assert.equal(bridge.snapshot().clients[0].capabilities.mounted, 'session-1');
+  assert.equal(bridge.snapshot().clients[0].mounted, 'session-1');
 });
 
 test('the bridge holds a poll until a command exists and settles it', async () => {
@@ -556,5 +556,6 @@ test('sanitize removes undefined so tool results stay lossless JSON', () => {
   assert.equal(sanitize(undefined), null);
   assert.throws(() => sanitize({ big: 1n }));
 });
+
 
 

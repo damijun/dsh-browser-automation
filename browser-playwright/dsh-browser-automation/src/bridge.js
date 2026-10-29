@@ -256,12 +256,22 @@ export class Bridge {
   snapshot() {
     return {
       state: this.clientState(),
-      clients: [...this.clients.values()].map((record) => ({
-        clientId: record.clientId.slice(0, 8),
-        seenAgoMs: Date.now() - record.seenAt,
-        polled: record.polled === true,
-        capabilities: record.capabilities,
-      })),
+      // Flattened on purpose: `clients[].mounted` reads better than
+      // `clients[].capabilities.mounted`, and the raw carrier fields
+      // (origin/href/protocol) collapse into one `carrier` word.
+      clients: [...this.clients.values()].map((record) => {
+        const caps = record.capabilities ?? {};
+        return {
+          clientId: record.clientId.slice(0, 8),
+          seenAgoMs: Date.now() - record.seenAt,
+          polled: record.polled === true,
+          carrier: caps.carrier ?? null,
+          hasSidebarRight: caps.hasSidebarRight === true,
+          mounted: caps.mounted ?? null,
+          activeTabId: caps.activeTabId ?? null,
+          visibleUrl: caps.visibleUrl ?? null,
+        };
+      }),
       pendingRequests: this.pending.size,
       queuedCommands: this.queue.length,
       heldPolls: this.waiters.length,

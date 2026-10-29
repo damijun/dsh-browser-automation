@@ -83,7 +83,7 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 它在右侧边栏开一个**会话级**标签页（`browser-automation` 类型），显示：
 
 - 连接：CDP 是否附着、桥的 `state` 与客户端数、挂起轮询数、`bridgeError`
-- CLI 解释器：实际用的 node（含 `source`：`dsh-runtime` / `path` / …）、命令、`-s=` 会话名
+- CLI 解释器：实际用的 node（文件名）、命令、`-s=` 会话名
 - 启动模式：`新开标签页` / `接管可见页` 当前是否可用
 - 本会话的页面：`pageId`、来源（`open` / `claim`）、标题、URL、是否 current
 - 两个按钮：`断开 CLI`（= `detach`，提示里写明会让已有 `pageId` 失效）、`重新连接`
@@ -91,6 +91,43 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 为什么是会话级标签页而不是左栏的全局页面：全局页面会替换主栏的对话，而侧边栏浏览器的挂载点依赖
 "会话在屏"（`mounted = sessions.onScreen`），面板开着时 `browser_open` / `browser_claim` 会直接不可用 ——
 一个报告状态的面板不该把它报告的东西关掉。面板标题在打开时捕获，所以改语言后重开即可。
+
+### `browser_status` 返回什么
+
+这份 JSON 是**三条独立链路**的体检报告，混在一个对象里。一条断了不影响另一条（CLI 可能连着但没有任何页面客户端，反之亦然）。
+
+| 字段 | 说明 |
+|---|---|
+| `attached` | **这次调用是否读到了 tab-list**。`status` 会在没连上时顺手 attach，所以 `true` = "现在能看见应用里的页面"；`false` 时看 `note` |
+| `cdpUrl` | 连的哪个调试端点（桌面端启动参数里的 `--remote-debugging-port=9222`） |
+| `currentIndex` | playwright-cli **自己的**"当前页"指针。daemon 全局状态，任何 `browser_*` 都会改它；re-attach 后回到应用页 |
+| `cli.command` / `cli.session` | 配置的命令名、`-s=` 会话名（所有 DSH 会话共用一个 daemon） |
+| `cli.resolved.node` | 实际跑 CLI 的 **node 解释器**（Host 是 Electron，`process.execPath` 不是 node） |
+| `cli.resolved.entry` | shim 指向的 JS 入口；`command` 本身就是可执行文件时为空串 |
+| `bridge.state` | `live` = 60s 内有页面真的挂着 poll（唯一能收命令的状态）；`stale` = 曾挂过但最近没动静；`never` = 从来没有（客户端半身没跑起来） |
+| `bridge.pendingRequests` | 宿主发出、正在等页面回答的请求数（例如 `browser_open` 等回执） |
+| `bridge.queuedCommands` | 已产生但还没交到任何 poll 手里的命令数（4s 未送达会重投） |
+| `bridge.heldPolls` | 页面正挂着的长轮询数。空闲正常态是 1；刚被消费掉时会是 0 |
+| `bridge.clients[]` | 每个加载了插件客户端的**应用页**一条（不是侧边栏里的网页） |
+| `clients[].clientId` | `sessionStorage` 里随机 UUID 的前 8 位：刷新不变、新 tab 会变。投递命令靠它，也用来对日志 |
+| `clients[].seenAgoMs` / `polled` | 距上次被看见多久 / 是否**曾经**挂过 poll（只有挂过才可能收命令） |
+| `clients[].carrier` | `desktop`（`dsh-app:` 自定义协议）或 `web`。**只有 desktop 能用** |
+| `clients[].hasSidebarRight` | 页面里有没有 `ctx.sidebarRight`。它是"open 为什么失败"的唯一解释，正常恒为 true |
+| `clients[].mounted` | `sessions.onScreen`：当前填满主栏的**DSH 会话 id**（`session-<uuid>`）；`null` = 主栏被全局页面（插件/技能/自动化任务/上下文洞察）占了、在 hero 屏，或会话视图还没挂载。**为 null 时不能开页** |
+| `clients[].activeTabId` | 右侧边栏**当前聚焦的标签页** id（`tabN`，内部 UI id，会重新铸造，不是 pageId） |
+| `clients[].visibleUrl` | 用户**真正看得见**的那个侧边栏网页 URL；`null` = 没聚焦浏览器页（可能在面板/文件标签上，或侧边栏收起） |
+| `modes.open` | 桥 `live` —— `ctx.sidebarRight.openTab` 能被执行 |
+| `modes.claim` | 桥 `live` **且** `visibleUrl` 非空（为此外发一次 `ping`，几毫秒）。真正的 claim 还会复核侧边栏是否收起、URL 能否在 tab-list 里匹配 |
+| `pages[]` | **唯一的标签页列表**：每个 CDP target 一行，含 `pageId`/`session`/`mine`/`source`。已不再单独返回原始 `tabs`（它是 `pages` 的子集） |
+| `pages[].pageId` | 标题里标记解析出的稳定句柄；没有标记时 `null` |
+| `pages[].session` | 归属的 DSH 会话；`dsh-app://…` 标成 `application`，有标记但未登记标成 `session-tag:<tag>` |
+| `pages[].mine` | 是否属于**调用这个工具的会话**（只有带标记的行才有） |
+| `pages[].source` | `open` / `claim` / `discovered`（标记是我的但登记表没记录，通常是重新加载后） |
+| `bridgeError` | 桥路由挂载失败时才有值（端口冲突等），正常 `null` |
+
+`pages` 与"原始 tab-list"的关系：`tabs[].index` 是唯一能喂给 `tab-select` 的寻址方式，`pages` 原样保留了 `index`/`current`/`title`/`url`，所以不再重复输出一份。
+
+---
 
 ### 单步 vs `run_code`
 
@@ -221,8 +258,9 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
 | `path` | 只用 PATH 上的 node；完全忽略自带那份 | 想跟全局 npm 安装环境严格一致时 |
 | 绝对路径 | 就用这个文件；不存在直接报错 | 多版本共存、要固定某个 node 时 |
 
-解析结果会出现在 `browser_status` 的 `cli.resolved` 里，带 `source`
-（`dsh-runtime` / `path` / `process` / `config` / `electron-run-as-node`），一眼能看出这次用的是哪个。
+解析结果会出现在 `browser_status` 的 `cli.resolved.node`（哪个 node）与 `entry`（哪个 JS 入口）。
+"这个 node 是哪来的"（`dsh-runtime` / `path` / `process` / `config` / `electron-run-as-node`）只写进宿主日志：
+它只在跑不起来时有用，不占工具返回值。
 
 截图和 playwright-cli 的快照文件落在 `%TEMP%\dsh-browser-automation\`，不污染工作区。
 
@@ -314,7 +352,7 @@ node --test
 | T10 解析单测 | ✅ 含 `[]()` 标题、`(current)`、多命中 |
 | `browser_status.modes` | ✅ 实测 `{open:true, claim:false}`（无可见浏览器页时 claim 明确不可用），claim 随之给出"先展开侧边栏"的报错 |
 | `browser_close` 真机 | ✅ 关掉后侧边栏 chip 真的少一个（tab48 消失）、webview 从 2 个变 1 个、CLI 视图同步变 2 行，**没有留下"页面加载失败"空壳**；被关的 pageId 立刻 `PAGE_NOT_FOUND`，另一页照常工作 |
-| `nodePath: auto` 真机 | ✅ `browser_status.cli.resolved.source = dsh-runtime`，用的是 `~/.dsh/dsh-runtimes/dsh-primary-runtime/.../node.exe`（v24.21.0）；新起的 CLI daemon 进程确实来自该路径，开页/列页正常 |
+| `nodePath: auto` 真机 | ✅ 日志显示 `node from dsh-runtime`；`browser_status.cli.resolved.node` = `~/.dsh/dsh-runtimes/dsh-primary-runtime/.../node.exe`（v24.21.0）；新起的 CLI daemon 进程确实来自该路径，开页/列页正常 |
 
 ---
 

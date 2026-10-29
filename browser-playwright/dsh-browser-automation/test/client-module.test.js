@@ -251,10 +251,8 @@ test('apply announces the page on the document-relative bridge URL', async () =>
   assert.equal(body.mounted, 'session-1');
   assert.equal(body.activeTabId, 'tab1');
   // The visible carrier is what browser_claim needs: the hidden one must be skipped.
-  assert.equal(
-    JSON.stringify(body.visible),
-    JSON.stringify({ url: 'https://visible.test/page', title: 'Visible page' }),
-  );
+  assert.equal(body.visibleUrl, 'https://visible.test/page');
+  assert.equal(body.carrier, 'desktop');
 });
 
 test('an open-tab command reaches ctx.sidebarRight.openTab once', async () => {
@@ -483,6 +481,7 @@ test('an empty poll answer does not spin the loop', async () => {
   // hello + a handful of polls; without the floor this would be hundreds.
   assert.ok(requests.length <= 8, `the loop spun: ${requests.length} requests in 300ms`);
 });
+
 
 
 

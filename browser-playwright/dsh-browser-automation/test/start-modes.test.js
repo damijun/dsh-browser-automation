@@ -104,7 +104,7 @@ test('browser_open never falls back to navigating an existing tab', async () => 
 });
 
 test('claim fails with the sidebar instruction when no page is visible', async () => {
-  const bridge = liveBridge({ visible: null, activeTabId: null });
+  const bridge = liveBridge({ visibleUrl: null, activeTabId: null });
   const { runtime } = harness({ bridge, tabs: [tab(1, 'https://a.test/', 'A')] });
   await assert.rejects(() => runtime.claimPage({ sessionId: 's1' }), (error) => {
     assert.match(error.message, /sidebar must be open/);
@@ -114,7 +114,7 @@ test('claim fails with the sidebar instruction when no page is visible', async (
 });
 
 test('claim fails when the visible page is not in the CLI tab list yet', async () => {
-  const bridge = liveBridge({ visible: { url: 'https://loading.test/' }, activeTabId: 'tab5' });
+  const bridge = liveBridge({ visibleUrl: 'https://loading.test/', activeTabId: 'tab5' });
   const { runtime } = harness({ bridge, tabs: [tab(1, 'https://a.test/', 'A')] });
   await assert.rejects(() => runtime.claimPage({ sessionId: 's1' }), (error) => {
     assert.match(error.message, /not in playwright-cli's tab list yet/);
@@ -126,7 +126,7 @@ test('claim fails when the visible page is not in the CLI tab list yet', async (
 test('claim takes over the visible page even when the CLI current tab is elsewhere', async () => {
   const pageId = 'dshpg-abcdef-01234567';
   const oldPageId = 'dshpg-111111-22222222';
-  const bridge = liveBridge({ visible: { url: 'https://visible.test/x' }, activeTabId: 'tab7' });
+  const bridge = liveBridge({ visibleUrl: 'https://visible.test/x', activeTabId: 'tab7' });
   const tabs = [
     tab(0, 'dsh-app://app/', 'DSH', true),
     tab(1, `https://other.test/ [${oldPageId}]`, 'Other'),
@@ -149,7 +149,7 @@ test('claim takes over the visible page even when the CLI current tab is elsewhe
 
 test('claim replaces a previous marker and unregisters the old pageId', async () => {
   const oldPageId = 'dshpg-111111-22222222';
-  const bridge = liveBridge({ visible: { url: 'https://visible.test/x' }, activeTabId: 'tab7' });
+  const bridge = liveBridge({ visibleUrl: 'https://visible.test/x', activeTabId: 'tab7' });
   const tabs = [tab(1, 'https://visible.test/x', `Visible page [${oldPageId}]`)];
   const { runtime } = harness({ bridge, tabs, marker: 'Visible page' });
   runtime.manager.register({ pageId: oldPageId, sessionId: 's1', url: 'https://visible.test/x', source: 'open' });
@@ -161,7 +161,7 @@ test('claim replaces a previous marker and unregisters the old pageId', async ()
 });
 
 test('claim matches the visible URL across a trailing slash and a hash', async () => {
-  const bridge = liveBridge({ visible: { url: 'https://visible.test/x/' }, activeTabId: 'tab7' });
+  const bridge = liveBridge({ visibleUrl: 'https://visible.test/x/', activeTabId: 'tab7' });
   const tabs = [tab(1, 'https://visible.test/x#section', 'Visible')];
   const { runtime } = harness({ bridge, tabs });
   assert.equal(samePage(tabs[0].url, 'https://visible.test/x/'), true);
@@ -176,3 +176,4 @@ test('claim refuses to run when the page half went quiet', async () => {
   });
   await assert.rejects(() => runtime.claimPage({ sessionId: 's1' }), /has gone quiet/);
 });
+

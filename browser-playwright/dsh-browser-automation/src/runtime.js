@@ -268,7 +268,7 @@ export class Runtime {
           'Reload the DSH window and retry, or use browser_open once the page half is back.',
       );
     }
-    const visibleUrl = caps?.visible?.url;
+    const visibleUrl = caps?.visibleUrl;
     if (typeof visibleUrl !== 'string' || !/^https?:/i.test(visibleUrl)) {
       throw new Error(
         'Could not see a browser page in the DSH sidebar. The sidebar must be open with a browser tab ' +
@@ -572,13 +572,24 @@ export class Runtime {
       attached: false,
       cdpUrl: String(this.config.cdpUrl ?? 'http://127.0.0.1:9222'),
       cli: { command: String(this.config.command ?? 'playwright-cli'), session: String(this.config.session ?? 'dsh') },
-      bridge: this.bridge ? this.bridge.snapshot() : { mounted: false },
       bridgeError: this.health?.bridgeError ?? null,
       currentIndex: -1,
-      tabs: [],
+      // `pages` is the only tab list: it carries every field the raw tab-list had
+      // plus the plugin's bookkeeping, so shipping both was pure duplication.
       pages: [],
       // The two start modes, so the model never has to guess what is possible now.
       modes: { open: false, claim: false },
+    };
+    /**
+     * Snapshot the bridge last, not first.
+     *
+     * Reading it before `attach()` and the claim ping produced self-contradictory
+     * output — `state: "never"` next to `open: true` — because the page had
+     * connected in between. One snapshot, taken when everything else is settled.
+     */
+    const finish = () => {
+      base.bridge = this.bridge ? this.bridge.snapshot() : { state: 'never', clients: [] };
+      return base;
     };
     if (request.action === 'detach') {
       try {
@@ -592,17 +603,11 @@ export class Runtime {
       } catch (error) {
         base.note = `Detach failed: ${error.message}`;
       }
-      return base;
+      return finish();
     }
     try {
       const listing = await this.attach(request.signal);
       base.attached = true;
-      base.tabs = listing.tabs.map((tab) => ({
-        index: tab.index,
-        current: tab.current,
-        title: tab.title,
-        url: tab.url,
-      }));
       base.currentIndex = listing.tabs.find((tab) => tab.current)?.index ?? -1;
       base.pages = discover({
         tabs: listing.tabs,
@@ -613,10 +618,9 @@ export class Runtime {
       const resolved = this.cli?.plan;
       base.cli.resolved = resolved
         ? {
-            // `source` says which of the four resolvers won: config, dsh-runtime,
-            // path, or plain process (a non-Electron host).
-            file: resolved.file,
-            source: resolved.nodeSource ?? null,
+            // Which node runs the CLI, and which JS entry it runs. Where that node
+            // came from stays in the log: it only matters when nothing runs.
+            node: resolved.file,
             entry: resolved.prefix.join(' '),
           }
         : null;
@@ -630,9 +634,9 @@ export class Runtime {
     if (this.bridge?.clientState() === 'live') {
       base.modes.open = true;
       const caps = await this.bridge.request('ping', {}, { timeoutMs: 5_000 }).catch(() => undefined);
-      base.modes.claim = Boolean(caps?.visible?.url);
+      base.modes.claim = Boolean(caps?.visibleUrl);
     }
-    return base;
+    return finish();
   }
 
   dispose() {

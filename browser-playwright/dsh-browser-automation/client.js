@@ -287,9 +287,8 @@ window.__ModuleLoader__.load({
 
           h('div', { key: 'cli', className: 'dshba-card' }, [
             h('div', { key: 'label', className: 'dshba-label' }, t('panel.interpreter')),
-            h('div', { key: 'file', className: 'dshba-mono' }, resolved ? baseName(resolved.file) : '—'),
+            h('div', { key: 'file', className: 'dshba-mono' }, resolved ? baseName(resolved.node) : '—'),
             h('div', { key: 'meta', className: 'dshba-row' }, [
-              resolved && resolved.source ? h('span', { key: 's', className: 'dshba-tag' }, resolved.source) : null,
               h('span', { key: 'cmd', className: 'dshba-label dshba-mono' }, dash(data && data.cli && data.cli.command)),
               h('span', { key: 'sess', className: 'dshba-label dshba-mono' }, data && data.cli ? `-s=${data.cli.session}` : ''),
             ]),
@@ -379,28 +378,27 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * The web page the user is actually looking at.
+       * The URL of the web page the user is actually looking at, if any.
        *
        * Playwright's "current tab" is its own bookkeeping and has nothing to do
        * with which sidebar tab is visible — it also resets to the application page
        * whenever the CLI re-attaches. `browser_claim` needs the visible page, and
        * the only surface that reports it is the carrier element itself: in Desktop
-       * a `<webview>` (whose `getURL()`/`getTitle()` the shell also uses), in Web
-       * the browser iframe.
+       * a `<webview>` (whose `getURL()` the shell also uses), in Web the browser
+       * iframe.
        *
-       * @returns {{ url: string | null, title: string | null } | null}
+       * @returns {string | null}
        */
-      function visiblePage() {
+      function visibleUrl() {
         try {
           for (const view of document.querySelectorAll('webview')) {
             if (!onScreen(view)) continue;
             const url = typeof view.getURL === 'function' ? view.getURL() : null;
-            const title = typeof view.getTitle === 'function' ? view.getTitle() : null;
-            if (url) return { url, title };
+            if (url) return url;
           }
           for (const frame of document.querySelectorAll('iframe[data-sidebar-browser-frame]')) {
             if (!onScreen(frame)) continue;
-            return { url: frame.getAttribute('src') ?? null, title: null };
+            return frame.getAttribute('src') ?? null;
           }
         } catch (error) {
           /* the carrier may be absent or restricted; capability stays null */
@@ -426,10 +424,10 @@ window.__ModuleLoader__.load({
           hasSidebarRight: Boolean(service),
           mounted,
           activeTabId,
-          visible: visiblePage(),
-          origin: window.location.origin,
-          href: window.location.href,
-          protocol: window.location.protocol,
+          visibleUrl: visibleUrl(),
+          // One word for "which carrier is this": the custom scheme only exists in
+          // Desktop, so it is also the answer to "can this window ever work".
+          carrier: window.location.protocol === 'dsh-app:' ? 'desktop' : 'web',
         };
       }
 

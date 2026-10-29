@@ -598,15 +598,29 @@ export function createTools(runtime) {
             action: string(),
             attached: boolean(),
             cdpUrl: string(),
-            cli: { type: 'object', additionalProperties: true },
-            bridge: { type: 'object', additionalProperties: true },
+            cli: {
+              type: 'object',
+              additionalProperties: true,
+              description:
+                'How the CLI is started: command, the shared -s= session name, and resolved {node, entry}.',
+            },
+            bridge: {
+              type: 'object',
+              additionalProperties: true,
+              description:
+                'The Host<->page channel: state (live/stale/never), clients[], and pendingRequests/queuedCommands/heldPolls.',
+            },
             bridgeError: {
               oneOf: [{ type: 'string' }, { type: 'null' }],
               description: 'Why the page bridge could not mount, when it failed.',
             },
-            currentIndex: integer('Current tab index, or -1 when nothing is attached.'),
-            tabs: { type: 'array', items: { type: 'object', additionalProperties: true } },
-            pages: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            currentIndex: integer('The tab index playwright-cli currently points at, or -1.'),
+            pages: {
+              type: 'array',
+              items: { type: 'object', additionalProperties: true },
+              description:
+                'Every CDP tab the CLI sees, each annotated with pageId/session/mine/source. The only tab list.',
+            },
             modes: {
               type: 'object',
               additionalProperties: false,
