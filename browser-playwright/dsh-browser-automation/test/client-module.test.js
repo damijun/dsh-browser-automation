@@ -141,7 +141,7 @@ function harness(options = {}) {
       layout: { openRightbar: () => calls.push(['openRightbar']) },
       sidebarRightTabs: {
         register: (definition) => {
-          registrations.push(['tabType', definition.id, definition.kind]);
+          registrations.push(['tabType', definition.id, definition.kind, definition.guide]);
           return () => {};
         },
       },
@@ -219,6 +219,12 @@ test('apply registers the panel tab type, its body and its strings', async () =>
   assert.ok(tabType, 'no tab type was registered');
   assert.equal(tabType[1], '@local/dsh-browser-automation/panel');
   assert.equal(tabType[2], 'browser-automation');
+  // Without a guide entry the panel only exists behind a chip or a tool call.
+  const guide = tabType[3];
+  assert.ok(Array.isArray(guide) && guide.length === 1, 'the type contributes exactly one guide entry');
+  assert.equal(guide[0].id, 'panel');
+  assert.equal(typeof guide[0].title, 'function');
+  assert.equal(typeof guide[0].icon, 'function');
 
   const body = registrations.find((entry) => entry[0] === 'slot');
   assert.ok(body, 'no body was registered');
@@ -477,6 +483,7 @@ test('an empty poll answer does not spin the loop', async () => {
   // hello + a handful of polls; without the floor this would be hundreds.
   assert.ok(requests.length <= 8, `the loop spun: ${requests.length} requests in 300ms`);
 });
+
 
 
 

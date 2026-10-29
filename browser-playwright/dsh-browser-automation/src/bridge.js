@@ -59,6 +59,25 @@ export class Bridge {
   }
 
   /**
+   * Refresh one client's capabilities without a new welcome.
+   *
+   * `hello` runs once per connection, but the facts it carries go stale: which
+   * Session is on screen changes whenever the user opens a panel or switches
+   * sessions, and the visible page changes with every sidebar click. Every poll
+   * therefore carries a fresh snapshot, so `browser_status` and the panel never
+   * report "no session surface" for a window that is plainly on screen.
+   *
+   * @param {string} clientId
+   * @param {Record<string, unknown>} [info]
+   */
+  note(clientId, info = {}) {
+    if (!clientId || !info || Object.keys(info).length === 0) return;
+    const record = this.clients.get(clientId);
+    if (!record) return;
+    record.capabilities = { ...record.capabilities, ...info };
+  }
+
+  /**
    * Whether a page is actually listening, and whether it ever was.
    *
    * A `hello` alone is not enough: anything that can reach the loopback route

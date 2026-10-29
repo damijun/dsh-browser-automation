@@ -230,6 +230,11 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
 
 ## 7. 已知限制（首版明确不做）
 
+- **只在 DSH Desktop 可用，Web profile 不支持。** 两条独立原因：
+  ① Web 版跑在普通浏览器里，**没有 CDP 端点**（没有 `--remote-debugging-port=9222`），`playwright-cli attach` 无处可附；
+  ② 侧边栏浏览器在 Web 里不是 Electron `<webview>`，`tab-list` 里永远只有应用页本身。
+  表现是 `browser_open` 报"连不到页面桥"或 `tab-list` 看不到新页 —— 这不是 bug，是载体不同。
+  同一份 `client.js` 在 Web 里仍会挂载并连接桥（它按文档相对 URL 解析），但没有任何页可驱动。
 - **跨窗口多会话**：`ctx.sidebarRight.openTab` 没有 session 参数，永远作用于"当前屏幕上的会话"。
   同一个窗口里的多个 DSH 会话没问题（靠标记区分，已实测）；两个 DSH 窗口各自开页时，桥只能打开请求时在屏的那个会话的标签页。
 - **`browser_screenshot` 只返回路径**，不内联图片字节（工具返回值必须是 lossless JSON；内联图片需要 attachments 服务）。
@@ -266,7 +271,7 @@ cd dsh-browser-automation
 node --test
 ```
 
-82 个用例，覆盖：
+88 个用例，覆盖：
 
 - `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、零命中/多命中、索引漂移）；
 - 标记脚本（追加、幂等、剥旧标记、页面改标题后补回、更新 `<title>` 的场景）——用 `node:vm` + 假 DOM 真跑；
@@ -282,10 +287,14 @@ node --test
   `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/找不到 chip/toggle 抛错"五种情况下的动作序列、
   `close-page` 真的调 `close(tabId)`、**collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、
   失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
+- **状态面板的三次注册**：tab 类型（`id` + `kind`）、body（`sidebar.right.pane.tab` + 用类型 `id` 作 key）、
+  locale 文案，缺任何一个的表现都是"用户看到一个没有内容的标签页"而且不报错；外加 `guide` 条目
+  （`id`/`title`/`icon`）—— 没有它，面板只能靠 chip 或工具调用才找得到，右侧"开始"页里不会出现；
 - 工具定义（自实现一遍 `assertSupportedJsonSchema` 子集，避免"装上才发现 schema 非法"）、渲染器、命名、无 `index`/`tab-new`/`targetId`；
   以及"运行时加的字段必须在 output schema 里声明"（这条抓到过两次真 bug）；
 - CliBridge（shim → JS 入口解析、**Electron 里必须换用 PATH 的 node**、argv 不被引号破坏、非零退出、超时、取消、失败信息去掉 Node 栈）；
-- 桥协议（长轮询、LIFO 投递、4s 未应答重投、结果落地、超时、页面失败、卸载、`clientState` 三态）；
+- 桥协议（长轮询、LIFO 投递、4s 未应答重投、结果落地、超时、页面失败、卸载、`clientState` 三态、
+  **每次 poll 刷新能力快照**：`mounted`/`visible` 会随"打开面板/切会话"变化，只在 `hello` 采集就会长期说谎）；
 - `SessionManager` 互斥、`discover` 的会话归属、`normalizeUrl` 规则、`samePage`、`sanitize` 的 JSON 安全。
 
 ### 验收记录（2026-10-28，真机）

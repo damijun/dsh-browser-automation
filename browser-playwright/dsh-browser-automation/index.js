@@ -175,6 +175,11 @@ async function serve({ request, response, runtime, bridge, settings, log }) {
       case 'poll': {
         const clientId = String(body.clientId ?? '');
         const waitMs = Number(body.waitMs ?? settings.requestTimeoutMs) || 15_000;
+        // Every poll refreshes what the window can see, so status never shows a
+        // stale "no session surface" after the user opens a panel or switches.
+        if (body.capabilities && typeof body.capabilities === 'object') {
+          bridge.note(clientId, body.capabilities);
+        }
         const command = await bridge.nextCommand(clientId, waitMs, abortOnClose(request, response));
         reply(response, 200, { ok: true, value: { command: command ?? null } });
         return;

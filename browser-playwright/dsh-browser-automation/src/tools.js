@@ -59,6 +59,7 @@ export function createTools(runtime) {
         'has the page they want open. ' +
         'This tool fails when the DSH page half is not connected — it never takes over an existing tab as a ' +
         'substitute, because that could destroy a page the user is working in. ' +
+        'Desktop only: the Web profile has no CDP endpoint to attach to, so no browser_* tool can drive its tabs. ' +
         PAGE_ID_NOTE,
       parameters: {
         type: 'object',

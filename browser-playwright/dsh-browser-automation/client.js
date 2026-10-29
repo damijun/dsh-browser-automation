@@ -101,6 +101,7 @@ window.__ModuleLoader__.load({
     const DICT = {
       en: {
         'panel.title': 'Browser automation',
+        'panel.guide': 'CDP, bridge, interpreter and this session\u2019s pages',
         'panel.refresh': 'Refresh',
         'panel.detach': 'Detach CLI',
         'panel.attach': 'Reconnect',
@@ -121,6 +122,7 @@ window.__ModuleLoader__.load({
       },
       zh: {
         'panel.title': '浏览器自动化',
+        'panel.guide': '查看 CDP、桥、解释器与本会话的受控页面',
         'panel.refresh': '刷新',
         'panel.detach': '断开 CLI',
         'panel.attach': '重新连接',
@@ -170,6 +172,31 @@ window.__ModuleLoader__.load({
     ].join('');
 
     const baseName = (value) => String(value ?? '').split(/[\\/]/).pop();
+
+    /**
+     * The guide row's glyph, matching `icon.svg` (a window with a play bubble).
+     *
+     * The guide renders `entry.icon` as a node, so this has to be a component and
+     * not the file path: without one the row is the only blank leading slot in the
+     * start page's list.
+     */
+    function panelIcon(props) {
+      const size = (props && props.size) || 16;
+      const h = React.createElement;
+      return h('svg', { width: size, height: size, viewBox: '0 0 64 64', fill: 'none', 'aria-hidden': 'true' }, [
+        h('rect', { key: 'body', x: 4, y: 8, width: 56, height: 48, rx: 8, fill: 'currentColor', opacity: 0.9 }),
+        h('rect', { key: 'bar', x: 4, y: 8, width: 56, height: 13, rx: 8, fill: 'currentColor' }),
+        h('circle', { key: 'd1', cx: 11, cy: 14.5, r: 2, fill: 'var(--dsw-alias-bg-base)' }),
+        h('circle', { key: 'd2', cx: 18, cy: 14.5, r: 2, fill: 'var(--dsw-alias-bg-base)' }),
+        h('circle', { key: 'd3', cx: 25, cy: 14.5, r: 2, fill: 'var(--dsw-alias-bg-base)' }),
+        h('path', {
+          key: 'bubble',
+          d: 'M32 26c8.3 0 15 5.6 15 12.5 0 2.6-1 5-2.8 7l2.2 5.5-5.6-2.6c-2.5 1.7-5.6 2.6-8.8 2.6-8.3 0-15-5.6-15-12.5S23.7 26 32 26z',
+          fill: 'var(--dsw-alias-bg-base)',
+        }),
+        h('path', { key: 'play', d: 'M29.5 33.2v10.6l8.8-5.3-8.8-5.3z', fill: 'currentColor' }),
+      ]);
+    }
 
     /**
      * Build the panel component. `t` comes from the effect that owns the locale
@@ -635,7 +662,13 @@ window.__ModuleLoader__.load({
         while (!stopped) {
           try {
             if (!connected) await announce();
-            const reply = await call('poll', { clientId: id, waitMs: POLL_WAIT_MS }, POLL_WAIT_MS + 10_000);
+            const reply = await call(
+            'poll',
+            // Carry a fresh capability snapshot: which Session is on screen and
+            // which page is visible change without any bridge command.
+            { clientId: id, waitMs: POLL_WAIT_MS, capabilities: capabilities() },
+            POLL_WAIT_MS + 10_000,
+          );
             connected = true;
             if (stopped) return;
             const command = reply && reply.command;
@@ -705,6 +738,18 @@ window.__ModuleLoader__.load({
                 id: PANEL_ID,
                 kind: PANEL_KIND,
                 title: () => t('panel.title'),
+                // The start page lists one capsule per guide entry, so this is what
+                // makes the panel discoverable without a model tool call. Order puts
+                // it after the built-in browser (10) and before the terminal (100).
+                guide: [
+                  {
+                    id: 'panel',
+                    order: 20,
+                    title: () => t('panel.title'),
+                    description: () => t('panel.guide'),
+                    icon: panelIcon,
+                  },
+                ],
               }),
             );
             disposers.push(

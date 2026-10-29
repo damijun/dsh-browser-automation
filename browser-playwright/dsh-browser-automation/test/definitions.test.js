@@ -483,6 +483,31 @@ test('a command that a page never answers is re-queued for the next poll', async
   assert.deepEqual(await pending, { tabId: 'tab9' });
 });
 
+/**
+ * A `hello` runs once per connection, but the facts it carries (which Session is
+ * on screen, which page is visible) change with every panel open or sidebar click.
+ * Polls refresh them, so status never reports a window that is plainly on screen as
+ * "no session surface".
+ */
+test('a poll can refresh capabilities without a new welcome', () => {
+  const bridge = new Bridge({ pollTimeoutMs: 100, requestTimeoutMs: 100 });
+  bridge.hello('client-1', { mounted: null, hasSidebarRight: true });
+  assert.equal(bridge.snapshot().clients[0].capabilities.mounted, null);
+
+  bridge.note('client-1', { mounted: 'session-1', visible: { url: 'https://a.test/' } });
+  const capabilities = bridge.snapshot().clients[0].capabilities;
+  assert.equal(capabilities.mounted, 'session-1');
+  assert.equal(capabilities.visible.url, 'https://a.test/');
+  // The rest of the announcement survives; a poll only overrides what it carries.
+  assert.equal(capabilities.hasSidebarRight, true);
+
+  // An unknown client, or an empty refresh, changes nothing.
+  bridge.note('client-2', { mounted: 'session-2' });
+  bridge.note('client-1', {});
+  assert.equal(bridge.snapshot().clients.length, 1);
+  assert.equal(bridge.snapshot().clients[0].capabilities.mounted, 'session-1');
+});
+
 test('the bridge holds a poll until a command exists and settles it', async () => {
   const bridge = new Bridge({ pollTimeoutMs: 200, requestTimeoutMs: 500 });
   assert.equal(bridge.hasClient(), false);
