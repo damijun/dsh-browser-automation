@@ -481,7 +481,29 @@ export class Runtime {
     );
   }
 
+  /**
+   * Bring a page to the front so the user can see the operation happening.
+   *
+   * Every visible tool (goto, reload, click, fill, press) calls this first: a sidebar
+   * tab that is not the selected one is invisible to the user, and the whole point of
+   * driving *their* sidebar is that they can watch it. Best effort — a page that
+   * cannot be located still gets its operation, which then reports the real failure.
+   *
+   * The page half already owns this: `prepare-capture` selects the tab, expanding the
+   * collapsed column first, and answers quickly when the page is already visible.
+   *
+   * @param {string} pageId
+   */
+  async reveal(pageId) {
+    try {
+      await this.bridge?.request('prepare-capture', { pageId }, { timeoutMs: 6_000 });
+    } catch (error) {
+      this.log(`could not reveal ${pageId}: ${error.message}`);
+    }
+  }
+
   async click(request) {
+    await this.reveal(request.pageId);
     return this.onPage(
       request.pageId,
       async (driver, tab) => ({
@@ -501,6 +523,7 @@ export class Runtime {
   }
 
   async fill(request) {
+    await this.reveal(request.pageId);
     return this.onPage(
       request.pageId,
       async (driver, tab) => ({
@@ -515,6 +538,7 @@ export class Runtime {
   }
 
   async press(request) {
+    await this.reveal(request.pageId);
     return this.onPage(
       request.pageId,
       async (driver, tab) => ({
@@ -526,6 +550,7 @@ export class Runtime {
 
   async goto(request) {
     const url = normalizeUrl(request.url);
+    await this.reveal(request.pageId);
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
@@ -540,22 +565,27 @@ export class Runtime {
   /**
    * Reload one sidebar page.
    *
-   * The DSH application page is not reloadable from here, and not by policy alone:
-   * it has no `pageId` (the marker is only ever installed on pages the plugin opened
-   * or claimed), so it cannot be addressed in the first place; `refuseApplicationTab`
-   * then refuses any target on the application scheme, which covers a marker that
-   * somehow ended up on `dsh-app:`. Other schemes (`file:`, `data:`) are allowed:
-   * the test subject is not the thing to restrict.
+   * Implemented as "navigate to the same URL", never with `playwright-cli reload`:
+   * that command reloads the whole DSH page whatever the selected tab is, and every
+   * sidebar browser page is lost with it. `goto` reaches only the tab this pageId
+   * resolved to, so a reload cannot touch the shell.
    *
    * @param {{ pageId: string, signal?: AbortSignal }} request
    */
   async reload(request) {
+    await this.reveal(request.pageId);
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
         const target = refuseApplicationTab(tab, 'browser_reload');
-        const result = await driver.reload(request.pageId, tab);
-        const url = result.url ?? target.url;
+        if (!/^[a-z]+:/i.test(String(target.url ?? ''))) {
+          throw new Error(
+            `Cannot reload: this page has no URL to navigate back to (got "${target.url ?? ''}"). ` +
+              'Use browser_goto with an explicit URL instead.',
+          );
+        }
+        const result = await driver.reload(request.pageId, { url: target.url }, target);
+        const url = result.reportedUrl ?? target.url;
         this.manager.update(request.pageId, { url, title: result.title ?? target.title });
         return { url, title: result.title ?? target.title };
       },
@@ -825,4 +855,5 @@ export function requireBridge(bridge, tool) {
 }
 
 export { sessionTag, resolveIndex };
+
 

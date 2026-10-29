@@ -428,38 +428,19 @@ export class PageDriver {
   }
 
   /**
-   * Reload the page behind a page id.
+   * Reload the page behind a page id, implemented as "navigate to the same URL".
    *
-   * `playwright-cli reload` acts on the CLI's *current* tab, so the target must be
-   * selected first — which `withPage` already does. That selection is the whole
-   * safety story: the command can only ever reach the page this id resolved to, not
-   * whatever tab happened to be current (that is how a hand-run `reload` once took
-   * down the DSH window).
+   * `playwright-cli reload` is never used: measured on a real window, it reloads the
+   * whole DSH page no matter which tab is current, and every sidebar browser page is
+   * lost with it. `goto <current url>` reaches only the tab this id resolved to, so a
+   * reload can never touch the shell.
    *
    * @param {string} pageId
-   * @param {ResolvedTab} [target]
+   * @param {{ url: string }} target
+   * @param {ResolvedTab} [resolved]
    */
-  async reload(pageId, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        await this.cli.run(['--raw', 'reload'], { timeoutMs: 60_000 });
-        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId)], {
-          retries: 1,
-        });
-        const parsed = parseEvalOutput(stdout);
-        let marked = parsed;
-        if (typeof parsed === 'string') {
-          try {
-            marked = JSON.parse(parsed);
-          } catch {
-            marked = { title: parsed };
-          }
-        }
-        return { title: marked?.title, url: marked?.url };
-      },
-      target,
-    );
+  async reload(pageId, target, resolved) {
+    return this.goto(pageId, { url: target.url }, resolved);
   }
 
   /**

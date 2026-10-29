@@ -13,6 +13,7 @@ const PAGE_ID = 'dshpg-abcdef-01234567';
 
 function harness({ url = 'https://example.test/' } = {}) {
   const calls = [];
+  const revealed = [];
   const runtime = new Runtime({ config: {} });
   runtime.cli = {
     plan: { file: 'x', prefix: [], nodeSource: 'test' },
@@ -25,17 +26,25 @@ function harness({ url = 'https://example.test/' } = {}) {
   runtime.driver = {
     attached: true,
     resolve: async () => tab,
-    reload: async (pageId, target) => {
-      calls.push(['driver.reload', pageId, target.index]);
-      return { url: target.url, title: 'Reloaded title' };
+    // Reload is `goto` with the same URL: the stub records the URL it was asked to
+    // navigate to, which is the whole difference from the CLI's `reload`.
+    reload: async (pageId, target, resolved) => {
+      calls.push(['driver.reload', pageId, target.url, resolved.index]);
+      return { reportedUrl: target.url, title: 'Reloaded title' };
     },
   };
   runtime.attach = async () => ({ tabs: [tab], ignored: [] });
-  return { runtime, calls, tab };
+  runtime.bridge = {
+    request: async (kind, payload) => {
+      revealed.push([kind, payload.pageId]);
+      return { visible: true, tabId: 'tab1' };
+    },
+  };
+  return { runtime, calls, revealed, tab };
 }
 
 test('reload acts on the resolved page and records the new title', async () => {
-  const { runtime, calls } = harness();
+  const { runtime, calls, revealed } = harness();
   runtime.manager.register({ pageId: PAGE_ID, sessionId: 's1', url: 'https://example.test/', source: 'open' });
 
   const result = await runtime.reload({ pageId: PAGE_ID });
@@ -43,10 +52,42 @@ test('reload acts on the resolved page and records the new title', async () => {
   assert.equal(result.index, 3);
   assert.equal(result.url, 'https://example.test/');
   assert.equal(result.title, 'Reloaded title');
-  // The driver received the resolved tab, so the CLI reloads that page, not whatever
-  // tab happened to be current.
-  assert.deepEqual(calls, [['driver.reload', PAGE_ID, 3]]);
+  // Reload navigates to the page's own URL — never `playwright-cli reload`, which
+  // reloads the whole DSH window no matter which tab is selected.
+  assert.deepEqual(calls, [['driver.reload', PAGE_ID, 'https://example.test/', 3]]);
+  // And the page is brought to the front first, so the user sees the reload happen.
+  assert.deepEqual(revealed, [['prepare-capture', PAGE_ID]]);
   assert.equal(runtime.manager.get(PAGE_ID)?.title, 'Reloaded title');
+});
+
+test('a page without a URL cannot be reloaded and says what to do', async () => {
+  const { runtime } = harness({ url: '' });
+  runtime.bridge = { request: async () => ({ visible: true }) };
+  await assert.rejects(() => runtime.reload({ pageId: PAGE_ID }), /no URL to navigate back to/);
+});
+
+test('goto brings the tab to the front before navigating', async () => {
+  const revealed = [];
+  const runtime = new Runtime({ config: {} });
+  runtime.cli = { plan: { file: 'x', prefix: [] }, run: async () => ({ stdout: '"-"', stderr: '', code: 0 }) };
+  const tab = { index: 2, current: false, title: `Page [${PAGE_ID}]`, url: 'https://a.test/' };
+  const order = [];
+  runtime.driver = {
+    attached: true,
+    resolve: async () => tab,
+    goto: async () => {
+      order.push('goto');
+      return { reportedUrl: 'https://b.test/', title: 'B' };
+    },
+  };
+  runtime.bridge = {
+    request: async (kind, payload) => {
+      order.push(['reveal', kind, payload.pageId]);
+      return { visible: false };
+    },
+  };
+  await runtime.goto({ pageId: PAGE_ID, url: 'https://b.test/' });
+  assert.deepEqual(order, [['reveal', 'prepare-capture', PAGE_ID], 'goto']);
 });
 
 test('reload refuses the DSH application page even if a marker points at it', async () => {
@@ -111,5 +152,7 @@ test('a pageId that resolves to nothing fails before any reload', async () => {
   await assert.rejects(() => runtime.reload({ pageId: PAGE_ID }), /PAGE_NOT_FOUND/);
   assert.equal(reloaded, false);
 });
+
+
 
 

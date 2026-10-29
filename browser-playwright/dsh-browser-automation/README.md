@@ -64,12 +64,14 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 | `browser_click {pageId, ref, button?, double?, modifiers?}` | 点击 |
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
-| `browser_goto {pageId, url}` | 导航；标记由 init script 自动续上，并再应用一次确认 |
-| `browser_reload {pageId}` | 重新加载该页（同 URL 新加载）。**永远够不到 DSH 应用页**：应用页没有 pageId，且 `dsh-app:` 目标在发命令前就被拒（`file:` 由 DSH 侧拒绝，见 §7） |
+| `browser_goto {pageId, url}` | 让该 tab 进入这个 URL；**先把 tab 切到前台**，用户能看见；标记由 init script 自动续上并复核 |
+| `browser_reload {pageId}` | 重新加载该页 —— 实现为 **`goto` 同一个 URL**，同样先切到前台。**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面（无论当前选中哪个 tab），侧边栏页面全丢 |
 | `browser_evaluate {pageId, expression}` | 求值，结果是 `JSON.stringify`（表达式必须是单表达式或 IIFE） |
-| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它） |
+| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它）。历史导航 `page.goBack()` / `page.goForward()` 在这里用，不做单独工具 |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
 | `browser_status {action}` | `status` / `attach` / `detach` / `panel`；连接出问题先看它，`panel` 打开状态面板 |
+
+**可见性约定**：`browser_goto`、`browser_reload`、`browser_click`、`browser_fill`、`browser_press` 都会**先把目标 tab 切到前台**（必要时展开收起的侧边栏）再执行，这样用户能看到插件在做什么。聚焦是尽力而为：定位不到 tab 时操作照常进行，失败时报真实原因。
 
 **副作用（工具描述里已声明）**：每个操作都会 `tab-select`，即改变 playwright-cli 的 current tab，并把它停在目标页上。
 `browser_claim` 会替换页面标记，原来那个 `pageId` 立即失效。
@@ -365,8 +367,8 @@ node --test
   `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/找不到 chip/toggle 抛错"五种情况下的动作序列、
   `close-page` 真的调 `close(tabId)`、**collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、
   失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
-- **重载边界**：`browser_reload` 只拒 `dsh-app:`（应用页），`file:`/`data:`/http(s) 一律放行；且**先在 CLI 里选中该页再 reload**（`reload` 作用在 current tab 上）；
-  伪造一个把标记挂到 `dsh-app://` 页的情况，必须报错且**不执行任何命令**；pageId 解析失败时也不 reload；
+- **重载 = goto 同 URL**：断言 driver 收到的是"该页自己的 URL"而不是 `reload` 命令；无 URL 时明确报错；`dsh-app:` 目标仍拒；
+  **可见操作先聚焦**：goto/reload 的调用顺序是 `prepare-capture`（切前台）→ 导航；
 - **配置读写**：Config 的 8 个字段必须全部 `.volatile()`（否则表单看不到），默认值与 README 一致，profile 覆盖经引用读取；
   写入只落 override 层（对照组：行内 `current` 已含 bundle 默认值，合并它会冻结默认值），`include:` 前缀的行 id 要能匹配，
   白名单用 `hasOwn`（`__proto__` 不能绕过），数字/布尔/空串校验；切片的 `configuration()` 被伪造时退回 `current`；

@@ -428,7 +428,8 @@ export function createTools(runtime) {
     {
       name: 'browser_goto',
       description:
-        'Navigate a controlled page to another URL. The page handle stays valid: the marker is re-applied after navigation and verified. ' +
+        'Navigate a controlled page to another URL. The tab is brought to the front first, so the user can see it. ' +
+        'The page handle stays valid: the marker is re-applied after navigation and verified. ' +
         'Use this to move an existing tab; use browser_open to add a tab.',
       parameters: {
         type: 'object',
@@ -462,11 +463,9 @@ export function createTools(runtime) {
     {
       name: 'browser_reload',
       description:
-        'Reload one sidebar browser page by pageId (same URL, fresh load). ' +
-        'It can never reload the DSH application page: the application has no pageId, and a target on the app scheme ' +
-        '(dsh-app:) is refused before any command runs. Any other scheme, including file:, is allowed. Use it when a ' +
-        'page looks stale, and prefer it over ' +
-        'browser_goto with the same URL.',
+        'Reload one sidebar browser page by pageId: it navigates that tab to its own current URL, after bringing the ' +
+        'tab to the front so the user can see it. It never uses the CLI reload command, which reloads the ' +
+        'whole DSH page whatever tab is selected. The tab stays the same tab, so pageId still resolves.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -538,7 +537,9 @@ export function createTools(runtime) {
         'Choose per step: if the next action depends on what the previous step returned, stay on single-step tools ' +
         '(snapshot → click/fill → snapshot); reach for run_code when the path can be written in advance — ' +
         'regression flows, batch extraction, or capturing a transient state atomically. ' +
-        'When a script fails, go back to browser_snapshot and re-explore instead of retrying the script blindly.',
+        'When a script fails, go back to browser_snapshot and re-explore instead of retrying the script blindly. ' +
+        'History navigation lives here too: page.goBack() / page.goForward() (same as the sidebar buttons); they are ' +
+        'deliberately not separate tools.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -709,4 +710,5 @@ export function readLocale(name) {
   const url = new URL(`../locale/${name}.json`, import.meta.url);
   return JSON.parse(readFileSync(url, 'utf8'));
 }
+
 
