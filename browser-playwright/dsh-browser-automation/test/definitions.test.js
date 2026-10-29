@@ -130,7 +130,7 @@ test('every tool definition satisfies the runtime schema subset', () => {
   assert.deepEqual(required.browser_fill, ['pageId', 'ref', 'text']);
   assert.deepEqual(required.browser_list, []);
   assert.deepEqual(errors, []);
-  assert.equal(tools.length, 14);
+  assert.equal(tools.length, 15);
 });
 
 /**
@@ -221,6 +221,7 @@ test('the tool set covers the documented capability list', () => {
     'browser_list',
     'browser_open',
     'browser_press',
+    'browser_reload',
     'browser_run_code',
     'browser_screenshot',
     'browser_snapshot',
@@ -556,6 +557,7 @@ test('sanitize removes undefined so tool results stay lossless JSON', () => {
   assert.equal(sanitize(undefined), null);
   assert.throws(() => sanitize({ big: 1n }));
 });
+
 
 
 

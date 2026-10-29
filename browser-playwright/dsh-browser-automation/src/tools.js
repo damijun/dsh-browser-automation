@@ -460,6 +460,41 @@ export function createTools(runtime) {
     },
 
     {
+      name: 'browser_reload',
+      description:
+        'Reload one sidebar browser page by pageId (same URL, fresh load). ' +
+        'It can never reload the DSH application page: the application has no pageId, and a target that is not an ' +
+        'http(s) page is refused before any command runs. Use it when a page looks stale, and prefer it over ' +
+        'browser_goto with the same URL.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          pageId: string('Page handle. Must be a sidebar browser page, never the DSH application.'),
+        },
+        required: ['pageId'],
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            pageId: string(),
+            index: integer(),
+            url: string(),
+            title: string(),
+          },
+          required: ['pageId', 'index', 'url'],
+        },
+        render: renderWith((value) => `Reloaded ${value.url}${value.title ? ` — ${value.title}` : ''}.`),
+      },
+      async execute(args, exec) {
+        requireSession(exec);
+        return sanitize(await runtime.reload({ pageId: args.pageId, signal: exec.signal }));
+      },
+    },
+
+    {
       name: 'browser_evaluate',
       description:
         'Evaluate one JavaScript expression inside a page and return the JSON-stringified result. ' +

@@ -31,12 +31,14 @@ function fakeEditor(rows, overrides = {}) {
 
 test('every editable key has a declared type and nothing else is writable', () => {
   assert.deepEqual(Object.keys(EDITABLE_KEYS).sort(), [
-    'cdpUrl',
+    'attachTimeoutMs',
+    'cdpPort',
     'command',
     'debug',
     'nodePath',
     'requestTimeoutMs',
     'screenshotSettleMs',
+    'screenshotTimeoutMs',
     'session',
     'timeoutMs',
   ]);
@@ -78,6 +80,23 @@ test('a reset removes the key and keeps the rest', async () => {
   assert.deepEqual(editor.edits[0].next, { debug: true });
 });
 
+test('the row is found by fiber before any id matching', () => {
+  const fiber = { name: 'my-fiber' };
+  const editor = {
+    entries: () => [
+      { id: 'include:other', fiber: {} },
+      { id: 'a-renamed-row', fiber },
+    ],
+  };
+  // A profile that renames the row still resolves, because the fiber is the identity.
+  assert.equal(findRow(editor, 'browser-automation', fiber).id, 'a-renamed-row');
+  // Without the fiber the id fallback finds nothing here.
+  assert.equal(findRow(editor, 'browser-automation'), null);
+  // Entries that expose the id under options are still matched.
+  const nested = { entries: () => [{ options: { id: 'include:browser-automation' } }] };
+  assert.notEqual(findRow(nested, 'browser-automation'), null);
+});
+
 test('a row inserted by a bundle patch is found under its include: id', () => {
   const editor = { entries: () => [{ id: 'include:browser-automation', config: {} }] };
   assert.notEqual(findRow(editor, 'browser-automation'), null);
@@ -97,6 +116,10 @@ test('a missing row or a bad value fails with a readable reason', async () => {
   assert.equal(findRow(editor, 'browser-automation'), null);
   assert.equal(findRow({ entries: () => { throw new Error('boom'); } }, 'x'), null);
 });
+
+
+
+
 
 
 

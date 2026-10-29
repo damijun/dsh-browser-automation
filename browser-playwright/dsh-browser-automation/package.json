@@ -3,7 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "description": "Drive the DSH Desktop right-sidebar browser through playwright-cli, with a per-session page identity.",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "browser-automation",
+    "playwright",
+    "sidebar",
+    "cdp"
+  ],
+  "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -21,6 +34,9 @@
   ],
   "scripts": {
     "test": "node --test test/"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.4"
   },
   "dsh": {
     "bundle": {

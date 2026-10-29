@@ -1,5 +1,5 @@
 import { Bridge, readJsonBody } from './src/bridge.js';
-import { Config } from './src/config.js';
+import { Config, cdpPortOf } from './src/config.js';
 import { applyConfigChange, findRow, resetConfigKey } from './src/config-write.js';
 import { Runtime } from './src/runtime.js';
 import { createTools } from './src/tools.js';
@@ -70,13 +70,19 @@ const ROW_ID = 'browser-automation';
  */
 export function apply(ctx, config) {
   const source = config ?? {};
+  const cdpPort = cdpPortOf(read(source.cdpPort, undefined), read(source.cdpUrl, undefined));
   const settings = {
     session: read(source.session, 'dsh'),
     command: read(source.command, 'playwright-cli'),
     nodePath: read(source.nodePath, 'auto'),
-    cdpUrl: read(source.cdpUrl, 'http://127.0.0.1:9222'),
+    // The setting is a port because the host half is fixed (loopback only); the URL
+    // is derived here so the driver and the status output keep one shape.
+    cdpPort,
+    cdpUrl: `http://127.0.0.1:${cdpPort}`,
     timeoutMs: read(source.timeoutMs, 20_000),
     requestTimeoutMs: read(source.requestTimeoutMs, 20_000),
+    attachTimeoutMs: read(source.attachTimeoutMs, 60_000),
+    screenshotTimeoutMs: read(source.screenshotTimeoutMs, 25_000),
     screenshotSettleMs: read(source.screenshotSettleMs, 1_200),
     debug: read(source.debug, false) === true,
   };
@@ -86,9 +92,11 @@ export function apply(ctx, config) {
     session: settings.session,
     command: settings.command,
     nodePath: settings.nodePath,
-    cdpUrl: settings.cdpUrl,
+    cdpPort: settings.cdpPort,
     timeoutMs: settings.timeoutMs,
     requestTimeoutMs: settings.requestTimeoutMs,
+    attachTimeoutMs: settings.attachTimeoutMs,
+    screenshotTimeoutMs: settings.screenshotTimeoutMs,
     screenshotSettleMs: settings.screenshotSettleMs,
     debug: settings.debug,
   };
@@ -128,7 +136,7 @@ export function apply(ctx, config) {
           kind: 'prefix',
           path: ROUTE_REGISTRATION,
           handler: (request, response) =>
-            serve({ request, response, runtime, bridge, settings, log, configEditor }),
+            serve({ request, response, runtime, bridge, settings, log, configEditor, fiber: () => ctx.fiber }),
         });
       } catch (error) {
         // A bridge that cannot mount must not cost the CLI tools: every page
@@ -177,8 +185,12 @@ export function apply(ctx, config) {
  * @param {Record<string, unknown>} input.settings
  * @param {(message: string) => void} input.log
  * @param {() => any} input.configEditor
+ * @param {() => any} input.fiber
  */
-async function serve({ request, response, runtime, bridge, settings, log, configEditor }) {
+async function serve({ request, response, runtime, bridge, settings, log, configEditor, fiber }) {
+  // Read lazily: the fiber is the identity `findRow` prefers, but it is only
+  // guaranteed once the row is settled.
+  const ownFiber = typeof fiber === 'function' ? fiber() : fiber;
   response.setHeader('content-type', 'application/json; charset=utf-8');
   response.setHeader('cache-control', 'no-store');
   response.setHeader('access-control-allow-origin', '*');
@@ -228,7 +240,7 @@ async function serve({ request, response, runtime, bridge, settings, log, config
         if (!editor) {
           reason = 'this Host does not expose configEditor';
         } else {
-          row = findRow(editor, ROW_ID);
+          row = findRow(editor, ROW_ID, ownFiber);
           if (!row) {
             // Only name the rows that look like this plugin's: dumping every entry
             // (~150) would bury the one line that matters.
@@ -269,7 +281,7 @@ async function serve({ request, response, runtime, bridge, settings, log, config
           return;
         }
         const key = String(body.key ?? '');
-        const value = await applyConfigChange({ editor, rowId: ROW_ID, key, value: body.value });
+        const value = await applyConfigChange({ editor, rowId: ROW_ID, fiber: ownFiber, key, value: body.value });
         reply(response, 200, { ok: true, value: { key, value } });
         return;
       }
@@ -279,7 +291,7 @@ async function serve({ request, response, runtime, bridge, settings, log, config
           reply(response, 501, { ok: false, error: 'this Host does not expose configEditor, so settings are read-only' });
           return;
         }
-        await resetConfigKey({ editor, rowId: ROW_ID, key: String(body.key ?? '') });
+        await resetConfigKey({ editor, rowId: ROW_ID, fiber: ownFiber, key: String(body.key ?? '') });
         reply(response, 200, { ok: true, value: { key: String(body.key ?? '') } });
         return;
       }
@@ -374,6 +386,10 @@ function reply(response, status, body) {
   response.writeHead(status, { 'content-length': Buffer.byteLength(text) });
   response.end(text);
 }
+
+
+
+
 
 
 

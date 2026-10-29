@@ -43,6 +43,8 @@ export class Runtime {
     });
     this.driver = new PageDriver(this.cli, {
       cdpUrl: String(this.config.cdpUrl ?? 'http://127.0.0.1:9222'),
+      attachTimeoutMs: Number(this.config.attachTimeoutMs ?? 60_000),
+      screenshotTimeoutMs: Number(this.config.screenshotTimeoutMs ?? 25_000),
       log: this.log,
     });
     return this.driver;
@@ -440,7 +442,11 @@ export class Runtime {
             // Playwright's capture path with a deadline that matches a cold frame.
             await driver.screenshotToFile(
               request.pageId,
-              { path: file, fullPage: request.fullPage, timeoutMs: 25_000 },
+              {
+                path: file,
+                fullPage: request.fullPage,
+                timeoutMs: Number(this.config.screenshotTimeoutMs ?? 25_000),
+              },
               tab,
             );
           } else {
@@ -525,6 +531,31 @@ export class Runtime {
         const result = await driver.goto(request.pageId, { url }, tab);
         this.manager.update(request.pageId, { url: result.reportedUrl ?? url, title: result.title });
         return { url: result.reportedUrl ?? url, title: result.title };
+      },
+      request.signal,
+    );
+  }
+
+  /**
+   * Reload one sidebar page.
+   *
+   * The DSH application page is not reloadable from here, and not by policy alone:
+   * it has no `pageId` (the marker is only ever installed on pages the plugin opened
+   * or claimed), so it cannot be addressed in the first place; `requireBrowserTab`
+   * then refuses any target whose URL is not http(s), which covers a marker that
+   * somehow ended up on an application-scheme tab.
+   *
+   * @param {{ pageId: string, signal?: AbortSignal }} request
+   */
+  async reload(request) {
+    return this.onPage(
+      request.pageId,
+      async (driver, tab) => {
+        const target = requireBrowserTab(tab, 'browser_reload');
+        const result = await driver.reload(request.pageId, tab);
+        const url = result.url ?? target.url;
+        this.manager.update(request.pageId, { url, title: result.title ?? target.title });
+        return { url, title: result.title ?? target.title };
       },
       request.signal,
     );
@@ -696,6 +727,31 @@ export function samePage(a, b) {
   if (!left || !right) return false;
   const normalize = (url) => `${url.origin}${url.pathname.replace(/\/$/, '')}${url.search}`;
   return normalize(left) === normalize(right);
+}
+
+/**
+ * Refuse an operation that only makes sense on a sidebar web page.
+ *
+ * Two independent reasons the DSH application page must never be the target of a
+ * reload: it has no `pageId` (the marker is only installed on opened/claimed pages,
+ * so it cannot be addressed), and this guard, which rejects any resolved tab whose
+ * URL is not http(s) — covering a marker that leaked onto an application-scheme tab.
+ * Reloading the application is exactly what took the window down by hand.
+ *
+ * @param {{ url?: string, title?: string }} tab
+ * @param {string} [tool]
+ */
+export function requireBrowserTab(tab, tool = 'this tool') {
+  const url = String(tab?.url ?? '');
+  if (!/^https?:/i.test(url)) {
+    const scheme = url.split(':')[0] || 'unknown';
+    throw new Error(
+      `${tool} can only act on a sidebar browser page (http/https), but this page handle resolves to ` +
+        `"${scheme}:". The DSH application page is not reloadable from here: it has no pageId, and reloading it ` +
+        'restarts the whole window. Nothing was reloaded.',
+    );
+  }
+  return tab;
 }
 
 /** @param {string} pageId */

@@ -15,9 +15,11 @@ export const EDITABLE_KEYS = {
   nodePath: 'string',
   command: 'string',
   session: 'string',
-  cdpUrl: 'string',
+  cdpPort: 'number',
   timeoutMs: 'number',
   requestTimeoutMs: 'number',
+  attachTimeoutMs: 'number',
+  screenshotTimeoutMs: 'number',
   screenshotSettleMs: 'number',
   debug: 'boolean',
 };
@@ -54,20 +56,26 @@ export function coerceConfigValue(key, raw) {
 /**
  * The profile row this plugin owns.
  *
- * `entries()` returns active rows by their resolved patch id, and a row inserted by
- * a bundle patch resolves as `include:<id>` — so this matches either spelling. A
- * missing row means the configuration is not addressable right now (a `--patch`
- * overlay composed the plugin, for example), and the card is read-only.
+ * Identity is the fiber, not the string: `entries()` keys rows by their resolved
+ * patch id (`include:<id>` for a row a bundle inserted), so a profile that renames or
+ * nests the row would break id matching while the fiber stays the object `apply`
+ * runs in. Published plugins do it this way (`entry.fiber === ctx.fiber`); the id is
+ * only the fallback, for a Host whose entries carry no fiber.
  *
- * @param {{ entries(): Array<{ id?: string }> }} editor
+ * @param {any} editor
  * @param {string} rowId
+ * @param {unknown} [fiber]
  */
-export function findRow(editor, rowId) {
+export function findRow(editor, rowId, fiber) {
   try {
     const rows = editor.entries();
     if (!Array.isArray(rows)) return null;
+    if (fiber) {
+      const own = rows.find((row) => row && row.fiber === fiber);
+      if (own) return own;
+    }
     const wanted = new Set([rowId, `include:${rowId}`]);
-    return rows.find((row) => row && wanted.has(row.id)) ?? null;
+    return rows.find((row) => row && wanted.has(row.id ?? row.options?.id)) ?? null;
   } catch {
     return null;
   }
@@ -103,10 +111,10 @@ function overrideLayer(editor, row) {
  *
  * @param {{ editor: any, rowId: string, key: string, value: unknown }} input
  */
-export async function applyConfigChange({ editor, rowId, key, value }) {
+export async function applyConfigChange({ editor, rowId, fiber, key, value }) {
   const coerced = coerceConfigValue(key, value);
   if (!coerced.ok) throw new Error(coerced.error);
-  const row = findRow(editor, rowId);
+  const row = findRow(editor, rowId, fiber);
   if (!row) throw new Error(`this plugin has no addressable row "${rowId}"`);
   await editor.edit(row, (current) => {
     const base = overrideLayer(editor, row) ?? current ?? {};
@@ -120,9 +128,9 @@ export async function applyConfigChange({ editor, rowId, key, value }) {
  *
  * @param {{ editor: any, rowId: string, key: string }} input
  */
-export async function resetConfigKey({ editor, rowId, key }) {
+export async function resetConfigKey({ editor, rowId, fiber, key }) {
   if (!kindOf(key)) throw new Error(`"${key}" is not a configurable field`);
-  const row = findRow(editor, rowId);
+  const row = findRow(editor, rowId, fiber);
   if (!row) throw new Error(`this plugin has no addressable row "${rowId}"`);
   await editor.edit(row, (current) => {
     const next = { ...(overrideLayer(editor, row) ?? current ?? {}) };
@@ -130,3 +138,8 @@ export async function resetConfigKey({ editor, rowId, key }) {
     return next;
   });
 }
+
+
+
+
+

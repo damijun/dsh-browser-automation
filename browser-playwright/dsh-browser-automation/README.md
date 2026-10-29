@@ -65,6 +65,7 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
 | `browser_goto {pageId, url}` | 导航；标记由 init script 自动续上，并再应用一次确认 |
+| `browser_reload {pageId}` | 重新加载该页（同 URL 新加载）。**永远够不到 DSH 应用页**：应用页没有 pageId，且非 http(s) 目标在发命令前就被拒 |
 | `browser_evaluate {pageId, expression}` | 求值，结果是 `JSON.stringify`（表达式必须是单表达式或 IIFE） |
 | `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它） |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
@@ -99,7 +100,7 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 | 字段 | 说明 |
 |---|---|
 | `attached` | **这次调用是否读到了 tab-list**。`status` 会在没连上时顺手 attach，所以 `true` = "现在能看见应用里的页面"；`false` 时看 `note` |
-| `cdpUrl` | 连的哪个调试端点（桌面端启动参数里的 `--remote-debugging-port=9222`） |
+| `cdpUrl` | 插件连的调试端点，由 `cdpPort` 与固定主机 `127.0.0.1` 拼出来（`cdpPort` 必须等于桌面端的 `--remote-debugging-port`） |
 | `currentIndex` | playwright-cli **自己的**"当前页"指针。daemon 全局状态，任何 `browser_*` 都会改它；re-attach 后回到应用页 |
 | `cli.command` / `cli.session` | 配置的命令名、`-s=` 会话名（所有 DSH 会话共用一个 daemon） |
 | `cli.resolved.node` | 实际跑 CLI 的 **node 解释器**（Host 是 Electron，`process.execPath` 不是 node） |
@@ -240,7 +241,9 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 - 卡片可折叠（点标题行），每项下面一行说明；
 - 只有几个确定取值的项用**分段按钮**：`Node 路径` = 自动 / PATH / 自定义路径（选自定义才出现输入框）、`调试日志` = 关闭 / 开启；其余是文本框 / 数字框；
 - 改过的项会显示「已覆盖」徽标和「恢复默认」；右下角「保存」把所有改动一次写入；
-- 保存走宿主 `ctx.configEditor.edit()`，也就是**只写 override 层**，`config` 里只出现你真正改过的键；保存后这一行会用新值重新加载。
+- 保存走宿主 `ctx.configEditor.edit()`，也就是**只写 override 层**，`config` 里只出现你真正改过的键。
+- ⚠️ **保存本身不会重载运行中的这一行**（实测：写完 patch 后实例仍跑旧值，`config-set` 返回 200 但 `effective` 未变）。
+  要生效：**重新启用本插件**（插件页的开关）或**重启 DSH**——实测重新启用后新值立刻生效。
 
 写到 patch 里的形状永远是三段：
 
@@ -261,14 +264,25 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
   name: '@local/dsh-browser-automation'
   config:
     session: dsh                 # playwright-cli -s=；所有 DSH 会话共用一个
-    cdpUrl: http://127.0.0.1:9222
+    cdpPort: 9222                # 见下：必须和启动参数一致
     command: playwright-cli      # 或绝对路径
     nodePath: auto               # 见下：哪个 node 去跑 CLI 的 .js 入口
     timeoutMs: 20000             # 单次 CLI 调用超时；超时重试一次然后报错
     requestTimeoutMs: 20000      # 等页面桥回答的时间
+    attachTimeoutMs: 60000       # CLI 附着的最长等待（Windows 上偶发卡住，超时重试一次）
+    screenshotTimeoutMs: 25000   # 单次截图抓取的截止时间
     screenshotSettleMs: 1200     # 截图前把隐藏页切到前台后，等首帧的时间
     debug: false                 # true 时用 console.debug 打印桥与 CLI 诊断
 ```
+
+> ⚠️ **`cdpPort` 只是"告诉插件去哪里找"，不会改变 DSH 监听哪个端口。**
+> 这个端口由 **DSH 桌面端的启动参数**决定（快捷方式 → 目标后面加 `--remote-debugging-port=9222`）。
+> 所以换端口要做**两件事**：改启动参数、把这里改成同一个数字。只改这里，插件会连到一个没人监听的端口。
+>
+> 为什么只有端口：Electron 的调试端口**只绑回环地址**（`127.0.0.1`），主机名是固定的，不需要也不能配。
+>
+> 旧版本的 patch 里如果写的是 `cdpUrl: http://127.0.0.1:9222`，仍然会被识别（从中解析端口），
+> 但设置卡片不显示它；确认新值后可以把那行删掉。
 
 ### `nodePath`：用哪个 Node 跑 CLI
 
@@ -332,7 +346,7 @@ cd dsh-browser-automation
 node --test
 ```
 
-98 个用例，覆盖：
+104 个用例，覆盖：
 
 - `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、零命中/多命中、索引漂移）；
 - 标记脚本（追加、幂等、剥旧标记、页面改标题后补回、更新 `<title>` 的场景）——用 `node:vm` + 假 DOM 真跑；
@@ -348,6 +362,8 @@ node --test
   `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/找不到 chip/toggle 抛错"五种情况下的动作序列、
   `close-page` 真的调 `close(tabId)`、**collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、
   失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
+- **重载边界**：`browser_reload` 只接受解析到 http(s) 页的目标，且**先在 CLI 里选中该页再 reload**（`reload` 作用在 current tab 上）；
+  伪造一个把标记挂到 `dsh-app://` 页的情况，必须报错且**不执行任何命令**；pageId 解析失败时也不 reload；
 - **配置读写**：Config 的 8 个字段必须全部 `.volatile()`（否则表单看不到），默认值与 README 一致，profile 覆盖经引用读取；
   写入只落 override 层（对照组：行内 `current` 已含 bundle 默认值，合并它会冻结默认值），`include:` 前缀的行 id 要能匹配，
   白名单用 `hasOwn`（`__proto__` 不能绕过），数字/布尔/空串校验；切片的 `configuration()` 被伪造时退回 `current`；
@@ -400,12 +416,49 @@ node --test
 | 启动即崩溃：`web boot: 1 entry did not activate / … import failed` | client bundle 的 revision 与内容不同步（改完 client.js 立刻刷新页面时出现）。**先把本行 disable**（`set_plugin enabled=false`）再启动，进应用后 enable，最后刷新一次页面 |
 | `detach` 之后第一次操作很慢 | 正常：下一次操作会重新 `attach`（含一次重试） |
 
-### 关于"启动即崩"
+### 改完 `client.js` 之后怎么办
 
-DSH 在 **boot 阶段**把"任一行激活失败"当致命错误，所以一个坏掉的插件会让整个界面起不来；
-运行期 reload 失败只会让那一行不激活（有诊断、不崩）。这两个行为不一样，排障先分清。
+**不要只刷新页面，要重启应用。** 实测（4 次）：只要 `client.js` 在**本次应用会话里被改过**，
+再 `reload` 页面就会 `web boot: … import failed`；而同一份代码**重启应用后一切正常**。
+等多久都没用（有一次改完 5 分钟才 reload，照样崩），所以这不是"构建没写完"的时序问题。
 
-改完 `client.js` 后不要立刻刷新页面，等 `plugin_manager` 那步完成。正确顺序：
-改文件 → disable → enable（宿主侧生效）→ 刷新页面（客户端侧生效）。
-| CLI 超时 | `playwright-cli list`（看守护进程），必要时 `playwright-cli -s=dsh detach` |
+- 宿主侧改动（`index.js`/`src/*`）：`plugin_manager` disable → enable 即可生效，不用重启。
+- 客户端改动（`client.js`）：disable → enable → **重启应用**。
+- 崩溃后：点「重启」即可；改好的代码会被重新构建并加载。
+
+---
+
+## 10. 开发与发布
+
+### 依赖：`@deepseek-ai/schemastery`
+
+`src/config.js` 用 Schemastery 声明 Config schema（字段必须 `.volatile()` 才能进设置表单），
+所以它是**普通运行时依赖**：
+
+```json
+"dependencies": { "@deepseek-ai/schemastery": "~3.18.4" }
+```
+
+- **发布安装**（`dsh plugin add` / 插件市场）：pnpm 把它装进 profile 的 `node_modules`，`import` 正常解析，用户无感。
+- **本地开发**（本仓库的插件目录以 junction 链进 profile）：Node 解析裸包名是从**文件的真实路径**往上找
+  `node_modules`，而真实路径在 dev 仓库里，那里没有这份依赖 —— 所以本地建了一个
+  `dsh-browser-automation/node_modules/@deepseek-ai/schemastery` 的 junction 指向 profile 里的副本。
+  它只服务本地开发，已被 `.gitignore`（`node_modules/`）排除，**不进仓库、也不进 npm 包**。
+  换机器后重建一次即可（或直接在插件目录 `pnpm install`）：
+
+  ```powershell
+  New-Item -ItemType Junction -Path .\node_modules\@deepseek-ai\schemastery `
+    -Target "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\@deepseek-ai\schemastery"
+  ```
+
+### 发布清单
+
+- `private: true` 发布前去掉；`name` 改成你的 scope（现在是 `@local/dsh-browser-automation`）；
+  `version` 建议随功能升到 `0.2.0`。
+- 补 `repository` / `homepage` / `bugs`（插件市场会读）。
+- `files` 只含运行时文件；`docs/` 会一起发出去（`docs/concurrency-fix.md` 是待办规格，可留可去）。
+- 发布前跑 `npm test`（99 用例）。
+- 标题/描述/图标来自 `locale/{en,zh}.json` 与 `icon.svg`（矢量，插件页当封面用）。
+
+
 

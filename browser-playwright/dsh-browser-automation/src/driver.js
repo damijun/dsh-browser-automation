@@ -78,6 +78,10 @@ export class PageDriver {
   constructor(cli, options) {
     this.cli = cli;
     this.cdpUrl = options.cdpUrl;
+    // Both are config fields: attach hangs on slow machines, and a capture is the
+    // most environment-sensitive operation this plugin performs.
+    this.attachTimeoutMs = Number(options.attachTimeoutMs ?? 60_000);
+    this.screenshotTimeoutMs = Number(options.screenshotTimeoutMs ?? 25_000);
     this.log = options.log ?? (() => {});
     this.attached = false;
   }
@@ -124,7 +128,7 @@ export class PageDriver {
     let lastError;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        return await this.cli.run(['--raw', 'attach', `--cdp=${this.cdpUrl}`], { timeoutMs: 60_000 });
+        return await this.cli.run(['--raw', 'attach', `--cdp=${this.cdpUrl}`], { timeoutMs: this.attachTimeoutMs });
       } catch (error) {
         lastError = error;
         this.log(`attach attempt ${attempt + 1} failed: ${error.message}`);
@@ -324,7 +328,7 @@ export class PageDriver {
   async screenshotToFile(pageId, options, target) {
     const settings = [
       `path: ${JSON.stringify(options.path)}`,
-      `timeout: ${Number(options.timeoutMs ?? 25_000)}`,
+      `timeout: ${Number(options.timeoutMs ?? this.screenshotTimeoutMs)}`,
       ...(options.fullPage ? ['fullPage: true'] : []),
     ].join(', ');
     const code = `async page => { await page.screenshot({ ${settings} }); return "saved"; }`;
@@ -418,6 +422,41 @@ export class PageDriver {
           }
         }
         return { url: options.url, title: marked?.title, reportedUrl: marked?.url };
+      },
+      target,
+    );
+  }
+
+  /**
+   * Reload the page behind a page id.
+   *
+   * `playwright-cli reload` acts on the CLI's *current* tab, so the target must be
+   * selected first — which `withPage` already does. That selection is the whole
+   * safety story: the command can only ever reach the page this id resolved to, not
+   * whatever tab happened to be current (that is how a hand-run `reload` once took
+   * down the DSH window).
+   *
+   * @param {string} pageId
+   * @param {ResolvedTab} [target]
+   */
+  async reload(pageId, target) {
+    return this.withPage(
+      pageId,
+      async () => {
+        await this.cli.run(['--raw', 'reload'], { timeoutMs: 60_000 });
+        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId)], {
+          retries: 1,
+        });
+        const parsed = parseEvalOutput(stdout);
+        let marked = parsed;
+        if (typeof parsed === 'string') {
+          try {
+            marked = JSON.parse(parsed);
+          } catch {
+            marked = { title: parsed };
+          }
+        }
+        return { title: marked?.title, url: marked?.url };
       },
       target,
     );
