@@ -28,6 +28,71 @@ export class Runtime {
     this.cli = undefined;
     this.openLock = Promise.resolve();
     this.attached = false;
+    /**
+     * Outcome of the startup attach, for `browser_status` and the panel.
+     *
+     * `ok: null` means "still trying", `ok: false` means it gave up (the reason is in
+     * `error`), and `skipped` means `autoAttach: false`.
+     *
+     * @type {{ ok: boolean | null, at: number | null, error: string | null, attempts: number, skipped?: boolean }}
+     */
+    this.autoAttach = { ok: null, at: null, error: null, attempts: 0 };
+    /** @type {(() => void) | undefined} */
+    this.cancelAutoAttach = undefined;
+  }
+
+  /**
+   * Attach once at startup, before the user opens any sidebar page.
+   *
+   * playwright-cli only adopts `webview` targets created after it attached, so a page
+   * opened before that point is invisible to `tab-list` forever (re-attaching does not
+   * help). Attaching during activation puts the boundary before the user's first page,
+   * which is the whole reason this exists.
+   *
+   * Best effort by design: it never throws, it retries while Electron's debug endpoint
+   * is still coming up, and it records the outcome instead of failing the row.
+   *
+   * @param {{ delayMs?: number, attempts?: number, backoffMs?: number }} [options]
+   */
+  scheduleAutoAttach(options = {}) {
+    if (this.config.autoAttach === false) {
+      this.autoAttach = { ok: null, at: null, error: null, attempts: 0, skipped: true };
+      this.log('auto-attach disabled by config');
+      return;
+    }
+    const delayMs = options.delayMs ?? 500;
+    const maxAttempts = options.attempts ?? 10;
+    const backoffMs = options.backoffMs ?? 800;
+    let cancelled = false;
+    this.cancelAutoAttach = () => {
+      cancelled = true;
+    };
+    this.autoAttach = { ok: null, at: null, error: null, attempts: 0 };
+
+    const run = async (attempt) => {
+      if (cancelled) return;
+      this.autoAttach.attempts = attempt;
+      try {
+        await this.attach();
+        this.autoAttach.ok = true;
+        this.autoAttach.at = Date.now();
+        this.autoAttach.error = null;
+        this.log(`auto-attach succeeded on attempt ${attempt}`);
+      } catch (error) {
+        this.autoAttach.error = error.message;
+        this.autoAttach.ok = attempt >= maxAttempts ? false : null;
+        this.log(`auto-attach attempt ${attempt} failed: ${error.message}`);
+        if (cancelled || attempt >= maxAttempts) {
+          if (!cancelled) this.log('auto-attach gave up; browser_open/browser_claim will re-attach on demand');
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        await run(attempt + 1);
+      }
+    };
+    setTimeout(() => {
+      void run(1);
+    }, delayMs);
   }
 
   /** Lazily create the CLI bridge: activating the plugin must not spawn anything. */
@@ -283,6 +348,11 @@ export class Runtime {
     const candidates = tabs.filter((tab) => /^https?:/i.test(tab.url));
     const match = candidates.find((tab) => tab.url === visibleUrl) ?? candidates.find((tab) => samePage(tab.url, visibleUrl));
     if (!match) {
+      // Two different failures wear the same shape, and the old single message sent
+      // people looking for a loading problem. Zero web pages in the list means the CLI
+      // never adopted this page at all — it only tracks sidebar pages created after it
+      // attached — and no amount of waiting changes that.
+      if (candidates.length === 0) throw new Error(stalePageWarning(visibleUrl, tabs.length));
       throw new Error(
         `The page you have open (${visibleUrl}) is not in playwright-cli's tab list yet ` +
           `(${tabs.length} tab(s) visible, ${candidates.length} of them web pages). It may still be loading; ` +
@@ -313,7 +383,29 @@ export class Runtime {
       includeUnclaimed: request.scope === 'all',
     });
     const filtered = request.scope === 'all' ? rows : rows.filter((row) => row.mine === true);
+    // A sidebar page the user opened before this automation session is invisible to the
+    // CLI even though Electron exposes it over CDP, so an empty list next to a visibly
+    // open page is this limitation, not an empty sidebar.
+    if (!warning && tabs.every((tab) => !/^https?:/i.test(tab.url))) {
+      const visible = await this.visiblePageUrl();
+      if (visible) warning = stalePageWarning(visible, tabs.length);
+    }
     return { count: filtered.length, pages: filtered, warning };
+  }
+
+  /**
+   * The URL of the sidebar page the user can see, straight from the page half.
+   *
+   * @returns {Promise<string | undefined>}
+   */
+  async visiblePageUrl() {
+    try {
+      const caps = await this.bridge.request('ping', {}, { timeoutMs: 2_000 });
+      const url = caps?.visibleUrl;
+      return typeof url === 'string' && url !== '' ? url : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -637,6 +729,9 @@ export class Runtime {
       cli: { command: String(this.config.command ?? 'playwright-cli'), session: String(this.config.session ?? 'dsh') },
       bridgeError: this.health?.bridgeError ?? null,
       currentIndex: -1,
+      // Whether the startup attach got through, so a broken CLI is visible without
+      // waiting for a tool to fail.
+      autoAttach: this.autoAttach ?? null,
       // `pages` is the only tab list: it carries every field the raw tab-list had
       // plus the plugin's bookkeeping, so shipping both was pure duplication.
       pages: [],
@@ -763,6 +858,29 @@ export function samePage(a, b) {
   if (!left || !right) return false;
   const normalize = (url) => `${url.origin}${url.pathname.replace(/\/$/, '')}${url.search}`;
   return normalize(left) === normalize(right);
+}
+
+/**
+ * Explain the one case where a page is plainly on screen and still unreachable.
+ *
+ * Electron exposes every sidebar page over CDP (`/json/list` lists them as `webview`
+ * targets), but playwright-cli only adopts the ones created *after* it attached: a
+ * page the user opened earlier, or a page whose webview was recreated by an app
+ * restart, never shows up in `tab-list`. Re-attaching does not help — verified by
+ * detaching and attaching again with four pre-existing webviews on screen. Closing
+ * the tab and reopening the URL creates a fresh target, which is adopted.
+ *
+ * @param {string} url
+ * @param {number} tabCount
+ */
+export function stalePageWarning(url, tabCount) {
+  return (
+    `browser_claim cannot see the page you have open (${url}): playwright-cli only tracks sidebar pages created ` +
+    `after it attached, and this one existed before (${tabCount} tab(s) visible, none of them a web page). ` +
+    'Waiting will not change that — Electron does expose the page over CDP, the CLI just never adopts it. ' +
+    'Close that tab and open the same URL again (or run browser_open with it): the new tab is adopted and ' +
+    'browser_claim works on it.'
+  );
 }
 
 /**

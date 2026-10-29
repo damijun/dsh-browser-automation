@@ -44,6 +44,14 @@ const fields = {
   // fails validation, and never shown in the form (it is not volatile).
   cdpUrl: z.string().description('Deprecated: use cdpPort.'),
 
+  autoAttach: z
+    .boolean()
+    .default(true)
+    .description(
+      'Attach playwright-cli once at startup, so sidebar pages opened afterwards are adopted. ' +
+        'A daemon process stays alive while DSH runs.',
+    ),
+
   timeoutMs: z
     .number()
     .default(20_000)
@@ -101,6 +109,7 @@ const VOLATILE = [
   'command',
   'nodePath',
   'cdpPort',
+  'autoAttach',
   'timeoutMs',
   'requestTimeoutMs',
   'attachTimeoutMs',
@@ -116,5 +125,6 @@ export const Config = z.object(
 );
 
 export default Config;
+
 
 

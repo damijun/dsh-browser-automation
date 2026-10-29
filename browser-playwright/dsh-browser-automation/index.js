@@ -79,6 +79,7 @@ export function apply(ctx, config) {
     // is derived here so the driver and the status output keep one shape.
     cdpPort,
     cdpUrl: `http://127.0.0.1:${cdpPort}`,
+    autoAttach: read(source.autoAttach, true) !== false,
     timeoutMs: read(source.timeoutMs, 20_000),
     requestTimeoutMs: read(source.requestTimeoutMs, 20_000),
     attachTimeoutMs: read(source.attachTimeoutMs, 60_000),
@@ -93,6 +94,7 @@ export function apply(ctx, config) {
     command: settings.command,
     nodePath: settings.nodePath,
     cdpPort: settings.cdpPort,
+    autoAttach: settings.autoAttach,
     timeoutMs: settings.timeoutMs,
     requestTimeoutMs: settings.requestTimeoutMs,
     attachTimeoutMs: settings.attachTimeoutMs,
@@ -113,6 +115,28 @@ export function apply(ctx, config) {
   runtime.bridge = bridge;
   const health = { bridgeError: null };
   runtime.health = health;
+
+  /**
+   * Attach before the user opens anything.
+   *
+   * playwright-cli only adopts sidebar pages created after it attached, so this moves
+   * the boundary to startup — the one window nobody notices. It is scheduled, never
+   * awaited: activation must stay fast, and a failure is reported through
+   * `browser_status` instead of failing the row (a failed row would break web boot).
+   */
+  ctx.effect(
+    () => {
+      runtime.scheduleAutoAttach({
+        delayMs: Number(settings.autoAttachDelayMs ?? 500),
+        attempts: Number(settings.autoAttachAttempts ?? 10),
+        backoffMs: Number(settings.autoAttachBackoffMs ?? 800),
+      });
+      return () => {
+        runtime.cancelAutoAttach?.();
+      };
+    },
+    'dsh-browser-automation: startup attach',
+  );
 
   /**
    * The Host's config editor, when this composition has one.
@@ -386,6 +410,7 @@ function reply(response, status, body) {
   response.writeHead(status, { 'content-length': Buffer.byteLength(text) });
   response.end(text);
 }
+
 
 
 

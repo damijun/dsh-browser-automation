@@ -286,6 +286,19 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 > 旧版本的 patch 里如果写的是 `cdpUrl: http://127.0.0.1:9222`，仍然会被识别（从中解析端口），
 > 但设置卡片不显示它；确认新值后可以把那行删掉。
 
+### `autoAttach`：开机自动 attach（默认开）
+
+**为什么需要**：`playwright-cli` 只收养 **attach 之后新建**的侧边栏页面。attach 发生在用户开页之后，那页就永远进不了
+`tab-list`（`browser_claim` 也拿不到，只能重开）。所以插件在**激活时**（DSH 启动后约 0.5s）就 attach 一次，
+把边界移到用户第一张页之前。失败会退避重试（0.5s 起、约 8 秒内共 10 次）；全程不抛错、不阻塞启动。
+
+- **可见性**：结果在 `browser_status.cli.autoAttach`（`{ok, at, error, attempts}`）与状态面板「开机自动连接」一行；
+  失败显示红字原因，不会被静默吞掉。
+- **代价**：DSH 运行期间常驻一个 `playwright-cli` daemon（含 playwright-core，约 60–150MB RSS），即使用户不用插件。
+- **只支持一个 DSH 实例**：daemon 以 `-s=dsh` 命名，两个实例会抢同一个 daemon（各自指向不同 CDP 端口时必然冲突）。
+- **关掉也能用**：`autoAttach: false` 时退回"第一次工具调用才 attach"——那时**已开着的页**属于"已存在"，要重开才能驱动。
+- **它不解决**：本次 attach 之前就开着的页；以及任何中途 `detach` / daemon 被杀之后的旧页（重新 attach 等于新会话）。
+
 ### `nodePath`：用哪个 Node 跑 CLI
 
 Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不是 node，所以跑
@@ -328,6 +341,13 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
   而且仍然保持聚焦。只有 `ctx.sidebarRight.close(tabId)` 能真正移除它，所以 `browser_close` 是
   **UI 动作**（走页面桥），完全不用 CLI；桥不可用时它直接报错，不会退化成 `tab-close`。
   （旧版本留下的空壳页没有标记，`pageId` 也指不到它，需要手动点标签上的 × 关掉。）
+- **CLI 只收养"attach 之后新建"的侧边栏页面**。Electron 通过 CDP 暴露了所有侧边栏页面（`/json/list` 里是 `webview` 类型），
+  但 `playwright-cli tab-list` 只跟踪 attach 之后创建的 target：**用户手动打开的页、以及应用重启后重建的页都看不见**
+  （实测：重新 detach→attach 也无效）。
+  **默认开启的 `autoAttach` 把 attach 提前到 DSH 启动时**，所以日常只要"只用一个 DSH 实例、不中途 detach"就不会再遇到；
+  在此之前已经开着的页仍需重开一次。`browser_claim` 对这类页会失败，并提示"关掉该 tab、重开同一 URL"——
+  重开会产生新 target，就能接管。`browser_list` 在"侧边栏明明有页、CLI 却一个网页都没有"时会带一条 `warning` 说明原因。
+  这也解释了偶发的"刚开的页几秒后从 tab-list 消失"：那是应用重启把 webview 重建成了"已存在"（auto-attach 之后重启也会重新建立边界）。
 - **`detach` 结束自动化会话**：DSH 与它的标签页毫发无损，但之后再操作会以全新的 attach 视图开始 ——
   已有的 `pageId` 不再解析（实测：detach 后重新 attach，`tab-list` 里看不到原来的 webview 目标），
   需要重新 `browser_open` / `browser_claim`。

@@ -104,6 +104,8 @@ export function createTools(runtime) {
         'gives it no surface, so the plugin cannot tell which page the user is on. ' +
         'SIDE EFFECT: this replaces the page marker on that tab, so any earlier pageId for the same tab stops ' +
         'resolving; the user may be actively using that page, so ask before claiming when the intent is unclear. ' +
+        'Cannot take over a page that existed before playwright-cli attached (for example one opened before an app ' +
+        'restart): the CLI never adopts it. Reopen that URL (or browser_open it) and claim the new tab instead. ' +
         'Fails when no page is visible, when the page half is not connected, or when the page is still loading.',
       parameters: {
         type: 'object',
@@ -162,20 +164,26 @@ export function createTools(runtime) {
               type: 'array',
               items: { type: 'object', additionalProperties: true },
             },
-            warning: string('Present when the tab list could not be read; explains why.'),
+            warning: string(
+              'Present when the tab list could not be read, or when the sidebar shows a page playwright-cli never adopted; explains why.',
+            ),
           },
           required: ['count', 'pages'],
         },
-        render: renderWith((value) =>
-          value.pages.length === 0
-            ? 'No browser tabs are controlled by this session yet. Use browser_open to open one, or browser_claim to take over the tab the user has open.'
-            : value.pages
-                .map(
-                  (page) =>
-                    `[${page.index}]${page.current ? ' (current)' : ''} ${page.pageId ?? '(unmarked)'} — ${page.title ?? ''} — ${page.url}`,
-                )
-                .join('\n'),
-        ),
+        render: renderWith((value) => {
+          const body =
+            value.pages.length === 0
+              ? 'No browser tabs are controlled by this session yet. Use browser_open to open one, or browser_claim to take over the tab the user has open.'
+              : value.pages
+                  .map(
+                    (page) =>
+                      `[${page.index}]${page.current ? ' (current)' : ''} ${page.pageId ?? '(unmarked)'} — ${page.title ?? ''} — ${page.url}`,
+                  )
+                  .join('\n');
+          // The warning is the whole point when the sidebar looks non-empty and this
+          // list does not: it must reach the model, not just the JSON.
+          return value.warning ? `${body}\n\nWarning: ${value.warning}` : body;
+        }),
       },
       async execute(args, exec) {
         const sessionId = requireSession(exec);
@@ -651,6 +659,12 @@ export function createTools(runtime) {
               oneOf: [{ type: 'string' }, { type: 'null' }],
               description: 'Why the page bridge could not mount, when it failed.',
             },
+            autoAttach: {
+              type: 'object',
+              additionalProperties: true,
+              description:
+                'Outcome of the startup attach: {ok, at, error, attempts, skipped?}. ok=false means the CLI could not attach at boot; browser_open/claim will retry on demand.',
+            },
             currentIndex: integer('The tab index playwright-cli currently points at, or -1.'),
             pages: {
               type: 'array',
@@ -710,5 +724,6 @@ export function readLocale(name) {
   const url = new URL(`../locale/${name}.json`, import.meta.url);
   return JSON.parse(readFileSync(url, 'utf8'));
 }
+
 
 

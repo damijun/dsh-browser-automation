@@ -103,12 +103,46 @@ test('browser_open never falls back to navigating an existing tab', async () => 
   assert.deepEqual(runtime.manager.all(), []);
 });
 
+test('browser_list warns when the sidebar shows a page the CLI cannot see', async () => {
+  const bridge = liveBridge({ visibleUrl: 'https://www.runoob.com/deepseek-harness/x.html', activeTabId: 'tab143' });
+  const tabs = [tab(0, 'dsh-app://app/', 'DeepSeek Harness')];
+  const { runtime } = harness({ bridge, tabs });
+  const result = await runtime.listPages({ sessionId: 's1' });
+  assert.equal(result.count, 0);
+  assert.match(result.warning, /only tracks sidebar pages created after it attached/);
+});
+
+test('browser_list stays quiet when the CLI does list a web page', async () => {
+  const bridge = liveBridge({ visibleUrl: 'https://a.test/', activeTabId: 'tab7' });
+  const tabs = [tab(0, 'dsh-app://app/', 'DeepSeek Harness'), tab(1, 'https://a.test/', 'Page')];
+  const { runtime } = harness({ bridge, tabs });
+  const result = await runtime.listPages({ sessionId: 's1' });
+  assert.equal(result.warning, undefined);
+});
+
 test('claim fails with the sidebar instruction when no page is visible', async () => {
   const bridge = liveBridge({ visibleUrl: null, activeTabId: null });
   const { runtime } = harness({ bridge, tabs: [tab(1, 'https://a.test/', 'A')] });
   await assert.rejects(() => runtime.claimPage({ sessionId: 's1' }), (error) => {
     assert.match(error.message, /sidebar must be open/);
     assert.match(error.message, /collapsed sidebar/);
+    return true;
+  });
+});
+
+/**
+ * A page opened before playwright-cli attached is exposed by Electron over CDP but never
+ * adopted by the CLI. Waiting cannot fix it, so the message must say that instead of
+ * "it may still be loading".
+ */
+test('claim explains a page the CLI never adopted instead of blaming loading', async () => {
+  const bridge = liveBridge({ visibleUrl: 'https://www.runoob.com/deepseek-harness/x.html', activeTabId: 'tab143' });
+  const tabs = [tab(0, 'dsh-app://app/', 'DeepSeek Harness')];
+  const { runtime } = harness({ bridge, tabs });
+  await assert.rejects(() => runtime.claimPage({ sessionId: 's1' }), (error) => {
+    assert.match(error.message, /only tracks sidebar pages created after it attached/);
+    assert.match(error.message, /Close that tab and open the same URL again/);
+    assert.doesNotMatch(error.message, /may still be loading/);
     return true;
   });
 });
@@ -176,4 +210,6 @@ test('claim refuses to run when the page half went quiet', async () => {
   });
   await assert.rejects(() => runtime.claimPage({ sessionId: 's1' }), /has gone quiet/);
 });
+
+
 

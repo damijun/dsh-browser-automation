@@ -15,6 +15,9 @@
         # there is no host to configure. Changing it here does NOT move the port DSH
         # listens on - edit the shortcut or launch script for that.
         cdpPort: 9222
+        # Attach at startup so sidebar pages opened afterwards are visible to the CLI.
+        # Costs one daemon process while DSH runs; only one DSH instance at a time.
+        autoAttach: true
         # CLI command or absolute path. Defaults to `playwright-cli` on PATH.
         command: playwright-cli
         # Which Node runs the CLI's JavaScript entry (the Host is Electron, so its
@@ -34,5 +37,6 @@
         screenshotSettleMs: 1200
         # Set true to print bridge/CLI diagnostics with console.debug.
         debug: false
+
 
 

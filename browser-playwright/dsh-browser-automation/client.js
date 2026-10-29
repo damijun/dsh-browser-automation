@@ -124,6 +124,11 @@ window.__ModuleLoader__.load({
         'panel.noSession': 'This tab is not bound to a session.',
         'panel.clients': 'clients',
         'panel.polls': 'held polls',
+        'panel.autoAttach': 'Startup attach',
+        'panel.autoAttachOk': 'attached',
+        'panel.autoAttachPending': 'connecting…',
+        'panel.autoAttachFailed': 'failed',
+        'panel.autoAttachOff': 'off (autoAttach: false)',
         'cfg.title': 'Browser automation settings',
         'cfg.summary': 'Sidebar browser automation',
         'cfg.loading': 'Loading configuration…',
@@ -189,6 +194,11 @@ window.__ModuleLoader__.load({
         'panel.noSession': '这个标签页没有绑定到会话。',
         'panel.clients': '客户端',
         'panel.polls': '挂起轮询',
+        'panel.autoAttach': '开机自动连接',
+        'panel.autoAttachOk': '已连接',
+        'panel.autoAttachPending': '连接中…',
+        'panel.autoAttachFailed': '失败',
+        'panel.autoAttachOff': '已关闭（autoAttach: false）',
         'cfg.title': '浏览器自动化配置',
         'cfg.summary': '侧边栏浏览器自动化',
         'cfg.loading': '正在读取配置…',
@@ -300,6 +310,26 @@ window.__ModuleLoader__.load({
       const h = React.createElement;
       const dash = (value) => (value === null || value === undefined || value === '' ? '—' : String(value));
       const dot = (ok, label) => h('span', { className: ok ? 'dshba-ok' : 'dshba-bad' }, label);
+
+      /**
+       * One line for the startup attach: connected at HH:MM, still trying, given up
+       * (with the reason), or switched off in the config.
+       *
+       * @param {{ ok?: boolean | null, at?: number | null, error?: string | null, skipped?: boolean } | null} value
+       * @param {(key: string) => string} translate
+       */
+      const autoAttachLine = (value, translate) => {
+        if (!value) return h('span', { className: 'dshba-label' }, '—');
+        if (value.skipped) return h('span', { className: 'dshba-label' }, translate('panel.autoAttachOff'));
+        if (value.ok === true) {
+          const at = value.at ? new Date(value.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+          return h('span', { className: 'dshba-ok' }, `${translate('panel.autoAttachOk')} ${at}`.trim());
+        }
+        if (value.ok === false) {
+          return h('span', { className: 'dshba-bad' }, `${translate('panel.autoAttachFailed')}: ${value.error ?? '?'}`);
+        }
+        return h('span', { className: 'dshba-warn' }, translate('panel.autoAttachPending'));
+      };
 
       return function BrowserAutomationPanel(props) {
         const sessionId = props && props.sessionId;
@@ -1221,6 +1251,7 @@ window.__ModuleLoader__.load({
     };
   },
 });
+
 
 
 
