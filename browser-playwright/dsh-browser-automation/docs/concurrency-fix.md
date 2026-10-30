@@ -106,12 +106,12 @@ PageDriver.withCli(fn)            跨页共享的全局指针互斥（所有页�
 
 ## 4. 已知边界 / 未做
 
-- **不改变跨会话的可见性**：当前没有会话归属校验，任何会话都能按 pageId 操作任何页面
-  （`reveal` 只会尝试聚焦当前会话的侧栏 tab，不会切换会话）。如果以后要拒绝跨会话操作，
-  是在 `onPage` 里加一条 `manager.get(pageId).sessionId !== request.sessionId` 的检查，
-  属于产品决定，不在本文范围。
+- **跨会话操作已被拒绝**（2026-10-31 补上）：`onPage` 在加锁前调用 `requireOwnership`，
+  归属取登记表的完整 `sessionId`，没有登记则退回 pageId 里的 6 位 tag；不匹配即 `PAGE_FOREIGN_SESSION` 且不执行任何动作。
+  `browser_claim` 是唯一的接管途径。测试见 `test/ownership.test.js`。
 - **锁的粒度是 driver**：如果将来把页面动作迁到单次 `run-code`（见
   `run-code-migration-plan.md` 阶段 D），`run-code` 本身不依赖全局指针，临界区可以变窄；
   但 `tab-select` 相关的路径（open/claim/旧工具）仍需这把锁。
 - **AsyncLocalStorage 的边界**：锁持有者内部派生的"游离 promise"会继承持有标记，
   若在锁释放后再调用 `withCli` 会直接通过。当前所有调用都在 `await` 链上，不存在这种用法。
+

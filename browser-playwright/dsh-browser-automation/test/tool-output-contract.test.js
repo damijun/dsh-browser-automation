@@ -30,6 +30,9 @@ function runtimeWith(driverOverrides) {
   runtime.cli = cli;
   runtime.attach = async () => ({ tabs: [], ignored: [] });
   runtime.bridge = { hasClient: () => false, caps: () => ({}) };
+  // Page actions are limited to the owning session, so the fixture page must belong to
+  // the caller these tests use.
+  runtime.manager.register({ pageId: PAGE_ID, sessionId: 's1', url: 'https://a.test/', source: 'open' });
   runtime.driver = {
     cli,
     resolvePage: async () => ({ index: 1, current: true, title: 'T', url: 'https://a.test/', pageId: PAGE_ID }),

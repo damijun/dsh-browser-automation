@@ -309,7 +309,7 @@ export class Runtime {
     const driver = this.ensureDriver();
     requireBridge(this.bridge, 'browser_claim');
     const listing = await this.attach(request.signal);
-    const target = await this.requireVisibleTab(listing.tabs);
+    const target = await this.requireVisibleTab(listing.tabs, request.sessionId);
     const previousIds = extractPageIds(target.title);
     const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
     const originalTitle = target.title.replace(/\s*\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/g, '').trim();
@@ -341,10 +341,18 @@ export class Runtime {
    * page half reports the visible carrier only — so "open the sidebar" is a real
    * requirement, not a workaround.
    *
+   * "The page in view" is a property of the **window**, not of the caller: the page half
+   * reports whichever webview is on screen, which belongs to the conversation currently
+   * mounted in the sidebar. A background conversation must therefore not be allowed to
+   * claim it — that would take the page away from the session the user is looking at.
+   * `caps.mounted` is that mounted session, and it is the same id used to mint pageIds
+   * (verified: `sessionTag(mounted)` equals the tag inside this session's handles).
+   *
    * @param {import('./tab-list.js').TabEntry[]} tabs
+   * @param {string} [sessionId] the calling session; omitted by internal callers
    * @returns {Promise<import('./tab-list.js').TabEntry & { tabId: string | null }>}
    */
-  async requireVisibleTab(tabs) {
+  async requireVisibleTab(tabs, sessionId) {
     let caps;
     try {
       caps = await this.bridge.request('ping', {}, { timeoutMs: 5_000 });
@@ -352,6 +360,17 @@ export class Runtime {
       throw new Error(
         `browser_claim has to ask the DSH page which page you have open, and that request failed: ${error.message}\n` +
           'Reload the DSH window and retry, or use browser_open once the page half is back.',
+      );
+    }
+    // The page in view belongs to whichever conversation is mounted; a background
+    // conversation claiming it would take the tab away from the user's current view.
+    const mounted = typeof caps?.mounted === 'string' && caps.mounted !== '' ? caps.mounted : null;
+    if (mounted && sessionId && mounted !== sessionId) {
+      throw new Error(
+        `PAGE_FOREIGN_SESSION: the browser page in view belongs to another DSH conversation (mounted ${mounted}). ` +
+          'browser_claim takes over the tab the user is looking at, so it only works from the conversation that is ' +
+          'currently open in the window. Switch to that conversation and run it there, or use browser_open to ' +
+          'create a tab in this one.',
       );
     }
     const visibleUrl = caps?.visibleUrl;
@@ -475,15 +494,23 @@ export class Runtime {
    * here and threaded into the driver, so a tool call costs two CLI round trips
    * (list, select) instead of four.
    *
+   * The page must belong to the calling session: a page handle is only meaningful
+   * together with the session that minted it, and acting across sessions would mutate
+   * a page the user is working in from a conversation they are not looking at.
+   * `browser_claim` remains the sanctioned way to take a page over.
+   *
    * @param {string} pageId
    * @param {(driver: PageDriver, tab: { index: number, title: string, url: string, current: boolean }) => Promise<Record<string, unknown>>} operation
+   * @param {{ signal?: AbortSignal, sessionId?: string }} [context]
    */
-  async onPage(pageId, operation, signal) {
+  async onPage(pageId, operation, context = {}) {
+    const { signal, sessionId } = context;
     const driver = this.ensureDriver();
     // §4.1 of the migration plan: name the *format check* result for what it is. A
     // valid pageId says nothing about whether the page still exists — that is what
     // resolvePage reports.
     const validPageId = requirePageId(pageId);
+    requireOwnership(this.manager, validPageId, sessionId);
     if (signal?.aborted) throw new Error('The operation was cancelled.');
     return this.manager.withLock(validPageId, async () => {
       // Attach through this path on the first call so a missing DSH debug port is
@@ -512,7 +539,7 @@ export class Runtime {
           snapshot: detail.snapshot,
         };
       },
-      request.signal,
+      { signal: request.signal, sessionId: request.sessionId },
     );
   }
 
@@ -603,7 +630,7 @@ export class Runtime {
         }
         return { path: file };
       },
-      request.signal,
+      { signal: request.signal, sessionId: request.sessionId },
     );
   }
 
@@ -644,7 +671,7 @@ export class Runtime {
           tab,
         ),
       }),
-      request.signal,
+      { signal: request.signal, sessionId: request.sessionId },
     );
   }
 
@@ -659,7 +686,7 @@ export class Runtime {
           tab,
         ),
       }),
-      request.signal,
+      { signal: request.signal, sessionId: request.sessionId },
     );
   }
 
@@ -670,7 +697,7 @@ export class Runtime {
       async (driver, tab) => ({
         result: await driver.press(tab, { key: request.key }),
       }),
-      request.signal,
+      { signal: request.signal, sessionId: request.sessionId },
     );
   }
 
@@ -684,7 +711,7 @@ export class Runtime {
         this.manager.update(request.pageId, { url: result.reportedUrl ?? url, title: result.title });
         return { url: result.reportedUrl ?? url, title: result.title };
       },
-      request.signal,
+      { signal: request.signal, sessionId: request.sessionId },
     );
   }
 
@@ -715,7 +742,7 @@ export class Runtime {
         this.manager.update(request.pageId, { url, title: result.title ?? target.title });
         return { url, title: result.title ?? target.title };
       },
-      request.signal,
+      { signal: request.signal, sessionId: request.sessionId },
     );
   }
 
@@ -734,7 +761,7 @@ export class Runtime {
         }
         return { output: typeof output === 'string' ? output : String(output ?? '') };
       },
-      request.signal,
+      { signal: request.signal, sessionId: request.sessionId },
     );
   }
 
@@ -747,7 +774,7 @@ export class Runtime {
         const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '');
         return { messages: lines.slice(-limit).join('\n') };
       },
-      request.signal,
+      { signal: request.signal, sessionId: request.sessionId },
     );
   }
 
@@ -963,6 +990,37 @@ export function refuseApplicationTab(tab, tool = 'this tool') {
   return tab;
 }
 
+/**
+ * Refuse to act on a page that belongs to another DSH session.
+ *
+ * A page handle is meaningful together with the session that minted it: acting across
+ * sessions would mutate a page the user is working in from a conversation they are not
+ * looking at (and `browser_list scope=all` deliberately shows those pages, which made
+ * that mistake easy). `browser_claim` — not a page action — is the sanctioned way to
+ * take a page over: it replaces the marker and registers it under the caller.
+ *
+ * Ownership comes from the registry when the page is registered there; otherwise from
+ * the 24-bit session tag embedded in the handle, so a page whose registry entry was lost
+ * (plugin restart) is still attributed correctly.
+ *
+ * @param {import('./sessions.js').SessionManager} manager
+ * @param {string} pageId
+ * @param {string | undefined} sessionId the calling session; undefined skips the check
+ */
+function requireOwnership(manager, pageId, sessionId) {
+  if (!sessionId) return;
+  const record = manager.get(pageId);
+  const owner = record ? record.sessionId : `tag:${pageId.split('-')[1]}`;
+  const mine = record ? record.sessionId === sessionId : pageId.split('-')[1] === sessionTag(sessionId);
+  if (mine) return;
+  throw new Error(
+    `PAGE_FOREIGN_SESSION: ${pageId} belongs to another DSH session (${owner}). ` +
+      'Page actions are limited to the session that opened or claimed the page, because the user is ' +
+      'looking at a different conversation. To take this page over in the current session, call ' +
+      'browser_claim while that tab is the visible one; browser_list scope="all" only lists such pages.',
+  );
+}
+
 /** @param {string} pageId */
 function requirePageId(pageId) {
   const value = String(pageId ?? '').trim();
@@ -1005,6 +1063,7 @@ export function requireBridge(bridge, tool) {
 }
 
 export { sessionTag, resolveIndex };
+
 
 
 

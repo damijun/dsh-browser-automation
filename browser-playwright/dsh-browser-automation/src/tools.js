@@ -222,7 +222,7 @@ export function createTools(runtime) {
         render: renderWith((value) => `Closed the sidebar tab for ${value.pageId}.`),
       },
       async execute(args, exec) {
-        requireSession(exec);
+        const sessionId = requireSession(exec);
         return sanitize(await runtime.closePage({ pageId: args.pageId, signal: exec.signal }));
       },
     },
@@ -258,9 +258,14 @@ export function createTools(runtime) {
         render: renderWith((value) => value.snapshot),
       },
       async execute(args, exec) {
-        requireSession(exec);
+        const sessionId = requireSession(exec);
         return sanitize(
-          await runtime.snapshot({ pageId: args.pageId, depth: args.depth, signal: exec.signal }),
+          await runtime.snapshot({
+            pageId: args.pageId,
+            depth: args.depth,
+            sessionId,
+            signal: exec.signal,
+          }),
         );
       },
     },
@@ -299,12 +304,13 @@ export function createTools(runtime) {
         render: renderWith((value) => `Screenshot saved to ${value.path}`),
       },
       async execute(args, exec) {
-        requireSession(exec);
+        const sessionId = requireSession(exec);
         return sanitize(
           await runtime.screenshot({
             pageId: args.pageId,
             fullPage: args.fullPage === true,
             target: args.target,
+            sessionId,
             signal: exec.signal,
           }),
         );
@@ -345,7 +351,7 @@ export function createTools(runtime) {
         render: renderWith((value) => `Clicked ${value.result || 'ok'}.`),
       },
       async execute(args, exec) {
-        requireSession(exec);
+        const sessionId = requireSession(exec);
         return sanitize(
           await runtime.click({
             pageId: args.pageId,
@@ -353,6 +359,7 @@ export function createTools(runtime) {
             button: args.button,
             double: args.double === true,
             modifiers: args.modifiers,
+            sessionId,
             signal: exec.signal,
           }),
         );
@@ -388,13 +395,14 @@ export function createTools(runtime) {
         render: renderWith((value) => `Filled ${value.result || 'ok'}.`),
       },
       async execute(args, exec) {
-        requireSession(exec);
+        const sessionId = requireSession(exec);
         return sanitize(
           await runtime.fill({
             pageId: args.pageId,
             ref: args.ref,
             text: args.text,
             submit: args.submit === true,
+            sessionId,
             signal: exec.signal,
           }),
         );
@@ -426,8 +434,8 @@ export function createTools(runtime) {
         render: renderWith((value) => `Pressed ${value.result || 'ok'}.`),
       },
       async execute(args, exec) {
-        requireSession(exec);
-        return sanitize(await runtime.press({ pageId: args.pageId, key: args.key, signal: exec.signal }));
+        const sessionId = requireSession(exec);
+        return sanitize(await runtime.press({ pageId: args.pageId, key: args.key, sessionId, signal: exec.signal }));
       },
     },
 
@@ -460,8 +468,8 @@ export function createTools(runtime) {
         render: renderWith((value) => `Navigated to ${value.url}${value.title ? ` — ${value.title}` : ''}.`),
       },
       async execute(args, exec) {
-        requireSession(exec);
-        return sanitize(await runtime.goto({ pageId: args.pageId, url: args.url, signal: exec.signal }));
+        const sessionId = requireSession(exec);
+        return sanitize(await runtime.goto({ pageId: args.pageId, url: args.url, sessionId, signal: exec.signal }));
       },
     },
 
@@ -493,8 +501,8 @@ export function createTools(runtime) {
         render: renderWith((value) => `Reloaded ${value.url}${value.title ? ` — ${value.title}` : ''}.`),
       },
       async execute(args, exec) {
-        requireSession(exec);
-        return sanitize(await runtime.reload({ pageId: args.pageId, signal: exec.signal }));
+        const sessionId = requireSession(exec);
+        return sanitize(await runtime.reload({ pageId: args.pageId, sessionId, signal: exec.signal }));
       },
     },
 
@@ -537,8 +545,8 @@ export function createTools(runtime) {
         render: renderWith((value) => value.output),
       },
       async execute(args, exec) {
-        requireSession(exec);
-        return sanitize(await runtime.runCode({ pageId: args.pageId, code: args.code, signal: exec.signal }));
+        const sessionId = requireSession(exec);
+        return sanitize(await runtime.runCode({ pageId: args.pageId, code: args.code, sessionId, signal: exec.signal }));
       },
     },
 
@@ -572,12 +580,13 @@ export function createTools(runtime) {
         render: renderWith((value) => value.messages || '(no console messages)'),
       },
       async execute(args, exec) {
-        requireSession(exec);
+        const sessionId = requireSession(exec);
         return sanitize(
           await runtime.consoleMessages({
             pageId: args.pageId,
             level: args.level,
             limit: args.limit,
+            sessionId,
             signal: exec.signal,
           }),
         );

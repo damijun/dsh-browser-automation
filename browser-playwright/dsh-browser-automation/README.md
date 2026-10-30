@@ -249,6 +249,16 @@ runtime.browser_xxx({ pageId, … })
 标记带会话摘要，所以**即使插件重启、登记表丢失**，`browser_list` 仍能按标记把标签页归回原会话。
 登记表只是缓存，标记本身才是真相。
 
+## 4.4 页面动作只对"本会话的页面"开放
+
+页面动作（`snapshot`/`screenshot`/`click`/`fill`/`press`/`goto`/`reload`/`run_code`/`console`）
+要求页面的归属等于调用方会话，否则报 `PAGE_FOREIGN_SESSION` 并且**不执行任何动作**：
+
+- 归属来源：登记表里的完整 `sessionId`；登记表没有记录（插件重启）时，用 pageId 里的 6 位会话 tag 比对；
+- `browser_list scope="all"` 仍然**列出**别的会话的页面（诊断用），但列出 ≠ 可操作；
+- 想接管别人的页面，用 `browser_claim`（它会把页面重新标记并登记到当前会话）——这是唯一被认可的途径；
+- 没有会话上下文的内部调用（诊断脚本）不校验。
+
 ---
 
 ## 5. 页面桥（为什么需要它）
