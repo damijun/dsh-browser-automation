@@ -25,7 +25,7 @@ function harness({ url = 'https://example.test/' } = {}) {
   const tab = { index: 3, current: false, title: `Page [${PAGE_ID}]`, url };
   runtime.driver = {
     attached: true,
-    resolve: async () => tab,
+    resolvePage: async () => tab,
     // Reload is `goto` with the same URL: the stub records the URL it was asked to
     // navigate to, which is the whole difference from the CLI's `reload`.
     reload: async (pageId, target, resolved) => {
@@ -74,7 +74,7 @@ test('goto brings the tab to the front before navigating', async () => {
   const order = [];
   runtime.driver = {
     attached: true,
-    resolve: async () => tab,
+    resolvePage: async () => tab,
     goto: async () => {
       order.push('goto');
       return { reportedUrl: 'https://b.test/', title: 'B' };
@@ -139,7 +139,7 @@ test('a pageId that resolves to nothing fails before any reload', async () => {
   let reloaded = false;
   runtime.driver = {
     attached: true,
-    resolve: async () => {
+    resolvePage: async () => {
       const error = new Error('PAGE_NOT_FOUND: no tab carries this page id');
       error.code = 'PAGE_NOT_FOUND';
       throw error;
@@ -152,6 +152,7 @@ test('a pageId that resolves to nothing fails before any reload', async () => {
   await assert.rejects(() => runtime.reload({ pageId: PAGE_ID }), /PAGE_NOT_FOUND/);
   assert.equal(reloaded, false);
 });
+
 
 
 

@@ -1,6 +1,7 @@
 import { CliError } from './cli.js';
-import { resolveIndex, parseTabList, currentIndex, describeTabs } from './tab-list.js';
-import { titleMarkerExpression, probeMarkerExpression, installMarkerCode } from './page-id.js';
+import { parseTabList, currentIndex, describeTabs } from './tab-list.js';
+import { titleMarkerExpression, probeMarkerExpression, installMarkerCode, extractPageIds } from './page-id.js';
+import { PAGE_CATALOG_CODE, parsePageCatalog, describeCatalog } from './page-catalog.js';
 
 /**
  * Parse the JSON value playwright-cli prints for `eval --raw`.
@@ -99,19 +100,33 @@ export class PageDriver {
   /**
    * Make sure a `playwright-cli` session is attached to the DSH browser.
    *
-   * Attachment is idempotent in the CLI (attaching an already-attached session
-   * reconnects it), so the cheap path is: try to list tabs, attach only when
-   * that fails. Both a never-attached session and a stale one (DSH restarted)
-   * fail the same way, which is exactly the recovery we want.
+   * The probe is always `tab-list` first, and only a failing probe attaches — for a
+   * fresh driver just as much as for a live one.
    *
-   * @param {{ force?: boolean }} [options]
+   * Why this is not just an optimization: `attach` opens a **new CDP session**, and
+   * playwright-cli only adopts sidebar pages created while it is attached, so
+   * re-attaching over a live session strands every page the user already has open
+   * (measured: after a redundant attach, `tab-list` showed just the application page
+   * while four sidebar tabs were still on screen). That is the real reason pages went
+   * missing after a plugin reload or a DSH restart. A never-attached session and a
+   * session whose DSH has exited both fail `tab-list`, which is exactly when attaching
+   * is correct.
+   *
+   * Known limitation: a daemon attached to a *different* CDP endpoint would also pass
+   * the probe, and this plugin documents that only one DSH instance is supported
+   * (README §6, `autoAttach`).
+   *
+   * @param {{ force?: boolean }} [options] `force` always attaches (diagnostics)
    */
   async ensureAttached(options = {}) {
-    if (this.attached && !options.force) {
+    if (!options.force) {
       try {
-        return await this.listTabs();
+        const tabs = await this.listTabs();
+        if (!this.attached) this.log('adopted an existing attach instead of opening a new CDP session');
+        this.attached = true;
+        return tabs;
       } catch (error) {
-        this.log(`tab-list failed while attached, re-attaching: ${error.message}`);
+        this.log(`no attached browser yet (${error.message}); attaching`);
         this.attached = false;
       }
     }
@@ -152,35 +167,142 @@ export class PageDriver {
   /**
    * Resolve a page id to its tab.
    *
+   * Kept as the historical name for {@link resolvePage}; `attach: false` skips the
+   * attach probe for callers that already know the daemon is connected.
+   *
    * @param {string} pageId
    * @param {{ attach?: boolean }} [options]
    * @returns {Promise<ResolvedTab>}
    */
   async resolve(pageId, options = {}) {
-    const tabs = options.attach === false ? (await this.listTabs()).tabs : (await this.ensureAttached()).tabs;
-    const hit = resolveIndex(
-      tabs.map((tab) => tab.text).join('\n'),
-      pageId,
-    );
-    return { index: hit.index, current: hit.current, title: hit.title, url: hit.url };
+    if (options.attach === false) return this.resolveTabIndex(pageId);
+    return this.resolvePage(pageId);
   }
 
   /**
-   * The core execution template: select the tab, run the command, and retry once
-   * if the index went stale between listing and selecting (the user can close a
+   * One `run-code`: every page in the daemon's context, with its in-page identity.
+   *
+   * `context.pages()` order equals `tab-list` order in this environment (verified on
+   * Electron webviews; docs/run-code-migration-plan.md records the same contract from
+   * Edge), so an index from here is a valid `tab-select` index for this call only.
+   *
+   * @returns {Promise<import('./page-catalog.js').PageCatalogEntry[]>}
+   */
+  async catalog() {
+    const { stdout } = await this.cli.run(['--raw', 'run-code', PAGE_CATALOG_CODE], { timeoutMs: 30_000 });
+    return parsePageCatalog(stdout);
+  }
+
+  /**
+   * pageId -> tab-list index, in one `run-code`.
+   *
+   * The in-page identity (`window.__dshBrowserAutomation.pageId`) is the primary
+   * source. The title marker is read as a *reported* fallback for pages that predate
+   * this version or whose init script was rejected — never as a silent second attempt
+   * (the caller sees `addressedBy` and the log line).
+   *
+   * Per §4.6 of the migration plan the first match wins: no collecting, no
+   * AMBIGUOUS_PAGE, no failing on a theoretical duplicate.
+   *
+   * @param {string} pageId
+   * @returns {Promise<ResolvedTab & { pageId: string, addressedBy: 'page' | 'title' }>}
+   */
+  async resolveTabIndex(pageId) {
+    const catalog = await this.catalog();
+    const hit = catalog.find((entry) => !entry.closed && entry.pageId === pageId);
+    if (hit) {
+      return {
+        index: hit.index,
+        current: hit.current,
+        title: hit.title ?? '',
+        url: hit.url ?? '',
+        pageId,
+        addressedBy: 'page',
+      };
+    }
+    const legacy = catalog.find(
+      (entry) => !entry.closed && extractPageIds(String(entry.title ?? '')).includes(pageId),
+    );
+    if (legacy) {
+      this.log(`page ${pageId} has no in-page identity; using the title marker at index ${legacy.index}`);
+      return {
+        index: legacy.index,
+        current: legacy.current,
+        title: legacy.title ?? '',
+        url: legacy.url ?? '',
+        pageId,
+        addressedBy: 'title',
+      };
+    }
+    throw new CliError(
+      `PAGE_NOT_FOUND: no open page carries ${pageId}. Open pages: ${describeCatalog(catalog)}.\n` +
+        'If the tab is still visible, the page may have been reloaded without the plugin identity: ' +
+        'run browser_list, then browser_claim it again.',
+      { code: 'PAGE_NOT_FOUND' },
+    );
+  }
+
+  /**
+   * tab-list index -> pageId, in one `run-code` (the reverse of {@link resolveTabIndex}).
+   *
+   * @param {number} tabIndex
+   * @returns {Promise<{ pageId: string | null, index: number, title: string, url: string, addressedBy: 'page' | 'title' | null }>}
+   */
+  async resolvePageId(tabIndex) {
+    if (!Number.isInteger(tabIndex) || tabIndex < 0) {
+      throw new CliError(`PAGE_NOT_FOUND: ${String(tabIndex)} is not a tab index.`, { code: 'PAGE_NOT_FOUND' });
+    }
+    const catalog = await this.catalog();
+    const entry = catalog.find((item) => item.index === tabIndex);
+    if (!entry) {
+      throw new CliError(
+        `PAGE_NOT_FOUND: no tab at index ${tabIndex}. Open pages: ${describeCatalog(catalog)}.`,
+        { code: 'PAGE_NOT_FOUND' },
+      );
+    }
+    if (entry.closed) {
+      throw new CliError(`PAGE_CLOSED: tab ${tabIndex} (${entry.url ?? '?'}) was closed.`, { code: 'PAGE_CLOSED' });
+    }
+    const fromTitle = extractPageIds(String(entry.title ?? ''))[0] ?? null;
+    return {
+      pageId: entry.pageId ?? fromTitle,
+      index: tabIndex,
+      title: entry.title ?? '',
+      url: entry.url ?? '',
+      addressedBy: entry.pageId ? 'page' : fromTitle ? 'title' : null,
+    };
+  }
+
+  /**
+   * pageId -> tab. Attaches first so a dead debug port reports the restart steps
+   * instead of a raw CLI error.
+   *
+   * @param {string} pageId
+   */
+  async resolvePage(pageId) {
+    await this.ensureAttached();
+    return this.resolveTabIndex(pageId);
+  }
+
+  /**
+   * Run `operation` against an already-resolved tab: select it, execute, and re-resolve
+   * once if the index went stale between resolving and selecting (the user can close a
    * tab at any moment).
+   *
+   * This is the only place that selects and retries. `withPage` is a thin wrapper over
+   * it, so resolving and executing never happen twice for one call.
    *
    * @template T
    * @param {string} pageId
+   * @param {ResolvedTab} tab
    * @param {(tab: ResolvedTab) => Promise<T>} operation
-   * @param {ResolvedTab} [target] a tab resolved earlier in the same call
    * @returns {Promise<T>}
    */
-  async withPage(pageId, operation, target) {
+  async executeOnResolvedTab(pageId, tab, operation) {
     let lastError;
-    let known = target;
+    let known = tab;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const hit = known ?? (await this.resolve(pageId));
+      const hit = known ?? (await this.resolvePage(pageId));
       known = undefined;
       try {
         if (hit.current !== true) await this.cli.run(['--raw', 'tab-select', String(hit.index)]);
@@ -191,6 +313,21 @@ export class PageDriver {
       }
     }
     throw lastError ?? new CliError(`Could not select the tab for ${pageId}.`, { code: 'PAGE_NOT_FOUND' });
+  }
+
+  /**
+   * The core execution template: resolve once (unless a tab was resolved earlier in
+   * the same call), then delegate to {@link executeOnResolvedTab}.
+   *
+   * @template T
+   * @param {string} pageId
+   * @param {(tab: ResolvedTab) => Promise<T>} operation
+   * @param {ResolvedTab} [target] a tab resolved earlier in the same call
+   * @returns {Promise<T>}
+   */
+  async withPage(pageId, operation, target) {
+    const tab = target ?? (await this.resolvePage(pageId));
+    return this.executeOnResolvedTab(pageId, tab, operation);
   }
 
   /**
@@ -493,6 +630,7 @@ export class PageDriver {
     return { index: currentIndex(stdout) ?? -1, tabs: describeTabs(parseTabList(stdout).tabs) };
   }
 }
+
 
 
 

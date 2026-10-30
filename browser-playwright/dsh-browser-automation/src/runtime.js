@@ -480,15 +480,21 @@ export class Runtime {
    */
   async onPage(pageId, operation, signal) {
     const driver = this.ensureDriver();
-    const validId = requirePageId(pageId);
+    // §4.1 of the migration plan: name the *format check* result for what it is. A
+    // valid pageId says nothing about whether the page still exists — that is what
+    // resolvePage reports.
+    const validPageId = requirePageId(pageId);
     if (signal?.aborted) throw new Error('The operation was cancelled.');
-    return this.manager.withLock(validId, async () => {
+    return this.manager.withLock(validPageId, async () => {
       // Attach through this path on the first call so a missing DSH debug port is
       // reported with the restart instructions instead of a raw CLI error.
       if (!driver.attached) await this.attach(signal);
-      const tab = await driver.resolve(validId);
+      // Resolved exactly once; the operation's own driver call selects the tab and
+      // retries a stale index (executeOnResolvedTab). Resolving twice per call is the
+      // duplication §4.4 of the plan asks to remove.
+      const tab = await driver.resolvePage(validPageId);
       const result = await operation(driver, tab);
-      return { pageId: validId, index: tab.index, ...result };
+      return { pageId: validPageId, index: tab.index, ...result };
     });
   }
 

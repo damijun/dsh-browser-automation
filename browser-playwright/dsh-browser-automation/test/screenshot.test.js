@@ -23,7 +23,7 @@ function harness({ plan, hidden = false }) {
   runtime.cli = cli;
   runtime.driver = {
     cli,
-    resolve: async () => ({ index: 1, current: false, title: `Title [${PAGE_ID}]`, url: 'https://a.test/' }),
+    resolvePage: async () => ({ index: 1, current: false, title: `Title [${PAGE_ID}]`, url: 'https://a.test/' }),
     screenshot: async () => {
       calls.push(['plain']);
       return { path: 'plain.png' };
@@ -101,3 +101,4 @@ test('a hidden window is refused before any command runs', async () => {
   });
   assert.deepEqual(calls, [], 'no capture may be attempted');
 });
+

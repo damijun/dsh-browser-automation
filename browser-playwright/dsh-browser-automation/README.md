@@ -164,16 +164,60 @@ pageId = dshpg-<sha256(sessionId) 前 6 位>-<8 位随机>
   带 60ms 防抖，`title.includes(id)` 保证幂等、不会累积方括号；文档还没有 `<title>` 时用
   `setInterval` 追 4 秒。
 
-于是 `playwright-cli tab-list` 的输出里就带着这个标记，`resolveIndex` 用**纯子串匹配**找它：
+于是 `playwright-cli tab-list` 的输出里就带着这个标记：
 
 ```
 - 0: [dsh 侧边栏浏览器 — DeepSeek Harness](dsh-app://app/)
 - 1: [哔哩哔哩 (゜-゜)つロ 干杯~-bilibili [dshpg-1a2b3c-9f8e7d6c]](https://www.bilibili.com/)
 ```
 
-解析器处理了标题里含 `[` `]` `(` `)`、URL 里含 `)`、`(current)` 前缀、CRLF、索引漂移，
-以及"零命中 → `PAGE_NOT_FOUND`（附带当前 tab-list 快照）/ 多命中 → `AMBIGUOUS_PAGE`（不自动选第一个）"。
-单元测试见 `test/tab-list.test.js`。
+**但从 2026-10-30 起，标记不再是寻址的唯一依据。** 同一段 init script 还把身份写进页面内部：
+
+```js
+window.__dshBrowserAutomation = { pageId, dispose }   // pageId 才是寻址真相
+```
+
+## 4.1 双向映射（一次 `run-code` 各一次）
+
+```text
+resolveTabIndex(pageId)   pageId         -> tab-list index
+resolvePageId(tabIndex)   tab-list index -> pageId
+```
+
+两者都基于 `src/page-catalog.js`：**一次** `page.context().pages()`，对每个页面读
+`window.__dshBrowserAutomation.pageId` / `document.title` / `location.href`（每页一次 `evaluate`，
+单页 3 秒超时，单页失败不影响其余页面）。
+
+- **顺序契约**：`context.pages()[index]` 与 `tab-list` 的 index 一致。本环境（Electron webview、
+  5 个 tab、应用页在 0）逐项实测一致；`current` 由 `candidate === page` 推导，不需要额外 CLI 调用。
+- **不缓存**：index 只在本次调用内有效（用户随时可能关标签页）。
+- **首次匹配即返回**（迁移计划 §4.6）：不收集、不产生 `AMBIGUOUS_PAGE`。
+- **标题 marker 是"会报告的兜底"**：页面内身份取不到时（旧版本打开的页、init script 被拒），
+  才会按标题 marker 匹配，并在日志里写明 `using the title marker at index N`；返回值的
+  `addressedBy` 字段是 `'page'` 或 `'title'`，调用方能看见走了哪条路。
+- 找不到时 `PAGE_NOT_FOUND` 会**附带当前打开页的清单**（`0: dsh-app://app/ (unmarked); 1: https://… (dshpg-…)`），
+  并提示"重开/重新 claim"。
+
+## 4.2 解析与执行职责
+
+```text
+runtime.onPage(pageId, …)         每页锁 + 首调用 attach + resolvePage 一次
+  -> driver.resolvePage(pageId)   只解析：catalog -> tab
+  -> operation(driver, tab)       动作内部走 withPage(pageId, fn, tab)
+       -> driver.executeOnResolvedTab(pageId, tab, fn)
+            tab-select（若目标不是 current）+ 执行 + index 失效时再解析一次（仅一次）
+```
+
+同一页只解析一次（`onPage` 解析后把 tab 传下去），避免"两层各自解析"的重复；`withPage` 现在只是
+`resolvePage` + `executeOnResolvedTab` 的小包装，保留它是因为 10+ 处调用点在用。
+
+## 4.3 attach 是"先探活"
+
+`ensureAttached()` **总是先 `tab-list` 探活，失败才 `attach`**，包括进程内 driver 还是全新实例的时候。
+
+原因不是省一次调用：`attach` 会开一个新的 CDP 会话，而 playwright-cli 只收养 attach 之后创建的侧边栏页面 ——
+对活着的会话再 attach 一次，**用户已经开着的页面会全部失联**（实测：界面 4 个 tab，`tab-list` 只剩应用页）。
+`force: true` 仍然强制重新 attach（诊断用）。
 
 标记带会话摘要，所以**即使插件重启、登记表丢失**，`browser_list` 仍能按标记把标签页归回原会话。
 登记表只是缓存，标记本身才是真相。

@@ -1,5 +1,8 @@
 # 页面身份映射与单次 `run-code` 工具改造方案
 
+> 状态：**阶段 A + B 已实现**（2026-10-30），工具仍全部走 CLI（阶段 C/D 未开始）
+> 实施记录见文末 §11
+
 ## 1. 目标与边界
 
 当前阶段的目标不是立即把所有工具改成单次 `run-code`，而是先建立可靠、清晰的
@@ -691,3 +694,34 @@ playwright-cli daemon
 > 当前工具继续使用现有 CLI 原生命令；后续再由 `run-code` 在一次调用中完成需要跨 tab
 > 寻址的页面动作。DSH bridge 继续负责侧边栏 UI，CLI 原生命令继续保留在无法安全等价
 > 替换的工具上。
+
+---
+
+## 11. 实施记录（2026-10-30，阶段 A + B）
+
+### 已落地
+
+| 计划项 | 落地位置 |
+|---|---|
+| 页面内身份作为寻址基础 | window.__dshBrowserAutomation.pageId（init script 双写；标题 marker 保留） |
+| 一次 un-code 读取整个页面集合 | src/page-catalog.js 的 PAGE_CATALOG_CODE + parsePageCatalog() |
+| pageId -> tab-list index | PageDriver.resolveTabIndex(pageId)（首次匹配即返回，不缓存） |
+| 	ab-list index -> pageId | PageDriver.resolvePageId(tabIndex) |
+| alidPageId 命名 | untime.onPage() 里 const validPageId = requirePageId(pageId) |
+| esolvePage / xecuteOnResolvedTab 拆分 | driver.resolvePage() 只解析；driver.executeOnResolvedTab() 负责 	ab-select + 执行 + 一次重定位；withPage() 变成两者的小包装 |
+| 每页锁 | SessionManager.withLock(pageId, …) 原样保留，onPage 每次调用只解析一次 |
+| 标题 marker 与工具执行路径 | 都未改动（工具仍走 CLI） |
+
+### 实测结论
+
+- **context.pages() 顺序 == 	ab-list index**：本环境（Electron webview，5 个 tab，应用页在 0）逐项一致；current 由 candidate === page 推导，不需要额外 CLI 调用。
+- **esolveTabIndex / esolvePageId / valuate 全链路**在真实 daemon 上通过（ddressedBy: "page"）。
+- **新发现（已修）**：nsureAttached() 原来只在 ttached === true 时才先探 	ab-list；在"进程内 driver 是新的、但 daemon 仍然活着"的场景（插件重载、行重新激活）会**无条件再 attach**。而 ttach 会开一个新的 CDP 会话，
+  playwright-cli 只收养 attach 之后创建的页面 —— 结果就是**用户已经开着的侧边栏页全部失联**（实测：界面 4 个 tab，	ab-list 只剩应用页）。
+  现在改为"先 	ab-list 探活，失败才 attach"，orce: true 仍可强制重新 attach（诊断用）。这条修复顺带解释了历史上"插件重载后页面抓不到"的现象。
+
+### 未做（按计划留在后续阶段）
+
+- 阶段 C：调用次数/耗时/1·5·20 tab 的对比测量；
+- 阶段 D：rowser_goto/eload/valuate/press/截图 迁移到单次 un-code；
+- 阶段 E：标题 marker 降级为诊断开关。
