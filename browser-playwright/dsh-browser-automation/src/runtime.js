@@ -194,14 +194,18 @@ export class Runtime {
     const before = new Set(listing.tabs.map((tab) => tab.text));
 
     return this.withOpenLock(async () => {
-      const opened = await this.requestSidebarOpen(url);
+      const opened = await this.requestSidebarOpen(url, request.sessionId);
+      const background = opened?.background === true;
       const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
       const found = await this.waitForNewTab(before, url, request.waitMs ?? 15_000);
       if (!found) {
         throw new Error(
           `A sidebar tab was opened for ${url}, but it never appeared in playwright-cli's tab list. ` +
-            'The page may have failed to load (or the sidebar is showing an error). ' +
-            'Check the sidebar, then use browser_list to see what is reachable.' +
+            (background
+              ? 'It was opened in a conversation that is not on screen, so its page has no visible surface and may ' +
+                'not have loaded. Switch to that conversation and retry.'
+              : 'The page may have failed to load (or the sidebar is showing an error). ' +
+                'Check the sidebar, then use browser_list to see what is reachable.') +
             localFileHint(url),
         );
       }
@@ -222,6 +226,7 @@ export class Runtime {
         pageId,
         url: marked.url || found.url,
         title: marked.title,
+        background,
       };
     });
   }
@@ -232,9 +237,9 @@ export class Runtime {
    * the page, and Electron's CDP cannot create targets. Reusing an existing tab
    * instead would be a guess about user intent, so it fails with an actionable error.
    */
-  async requestSidebarOpen(url) {
+  async requestSidebarOpen(url, sessionId) {
     try {
-      const result = await this.bridge.request('open-tab', { url });
+      const result = await this.bridge.request('open-tab', { url, sessionId });
       this.log(`sidebar opened a tab for ${url}: ${JSON.stringify(result)}`);
       return result;
     } catch (error) {
@@ -1063,6 +1068,7 @@ export function requireBridge(bridge, tool) {
 }
 
 export { sessionTag, resolveIndex };
+
 
 
 

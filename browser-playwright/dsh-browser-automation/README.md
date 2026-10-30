@@ -55,7 +55,7 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 
 | 工具 | 作用 |
 |---|---|
-| `browser_open {url}` | 通过 DSH UI 新建侧边栏标签页 → 注入标记 → 返回 `pageId`。桥不可用即报错，**不会**复用现有标签页 |
+| `browser_open {url}` | 通过 DSH UI 新建侧边栏标签页 → 注入标记 → 返回 `pageId`。桥不可用即报错，**不会**复用现有标签页。**后台会话**走内部的 `openTabIn`，结果带 `background: true`（不聚焦、不可截图），见 §7.3 |
 | `browser_claim {note?}` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回注入前的标题；替换旧标记，换新 `pageId` |
 | `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页），带实时索引 |
 | `browser_close {pageId}` | **移除 DSH 侧边栏标签页本身**（`ctx.sidebarRight.close(tabId)`）并注销登记；不是 CLI 的 `tab-close` |
@@ -494,6 +494,27 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
 
 插件**不做检测、也不强制还原**（这一版的决定）：越界是模型该守的约定，不是插件该纠正的状态。
 真要更大画布，让人把侧栏拉宽即可。
+
+### 7.3 前台会话 vs 后台会话
+
+DSH 的侧栏是"每个会话一份"，但**只有当前显示的那个会话有渲染表面**。插件据此分成两种行为：
+
+| | 前台会话（窗口里正显示的那个） | 后台会话（其它） |
+|---|---|---|
+| 可见操作（`goto`/`reload`/`click`/`fill`/`press`） | **先切到目标 tab 再执行**，用户能看见 | 照常执行，**不聚焦**（也不该聚焦——它不在屏幕上） |
+| `browser_screenshot` | ✅（窗口需可见，见 7.1） | ❌ **无法截图**：没有可见表面 → Chromium 不产帧 |
+| `browser_open` | 走 `ctx.sidebarRight.openTab` | 走内部的 `openTabIn(sessionId, …)`，见下 |
+| `browser_claim` | ✅（接管眼前那页） | ❌ 拒绝（`PAGE_FOREIGN_SESSION`） |
+
+**后台开页的前提**：`openTabIn` 只对"在本窗口渲染过侧栏"的会话生效——也就是**你在这个会话里说过话**（你切走之后它仍然有效，adopt 只在会话被移除时撤销）。它失败时是**静默 no-op**，所以插件做了两层校验：`tabsIn` 前后差 + `waitForNewTab`（tab-list 里是否出现该 URL）。两层都没过就报明确错误：
+
+> the conversation <id> has no sidebar surface in this window yet (it has not been shown since DSH started), so a page cannot be created in it. Open that conversation once, then retry.
+
+**真正会失败的场景**：应用重启后自动恢复/排队的后台回合、以及从不显示的 subagent 会话——它们在本窗口里没有 surface。这类情况下页面必须由前台会话创建，或者你先切过去一次。
+
+`browser_open` 的结果带 `background: true` 并在正文里说明："这个会话不在屏幕上，tab 建在后台：不聚焦、不能截图，其它工具照常可用。"
+
+---
 ---
 
 ## 8. 自测

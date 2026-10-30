@@ -971,9 +971,43 @@ window.__ModuleLoader__.load({
        *
        * @param {string} url
        */
-      async function openTab(url) {
+      async function openTab(url, sessionId) {
         const service = sidebar();
         if (!service) throw new Error('the sidebar-right client service is not available in this page');
+
+        // A conversation that is not the one on screen gets its tab through the
+        // per-session entry point (`openTabIn`, not on `ISidebarRight`). It only works
+        // once that conversation's seat has rendered — which is exactly what happened
+        // when the user was in it to give the instruction — and it fails *silently*
+        // otherwise, so the tab count is compared before and after.
+        const mounted = typeof service.mounted?.getSnapshot === 'function' ? service.mounted.getSnapshot() : null;
+        const background = typeof sessionId === 'string' && sessionId !== '' && mounted !== sessionId;
+        if (background) {
+          if (typeof service.openTabIn !== 'function') {
+            throw new Error(
+              'this DSH build does not let a plugin open a tab for a conversation that is not on screen ' +
+                '(ctx.sidebarRight has no openTabIn)',
+            );
+          }
+          const count = () => {
+            try {
+              return typeof service.tabsIn === 'function' ? service.tabsIn(sessionId).length : null;
+            } catch (error) {
+              return null;
+            }
+          };
+          const beforeCount = count();
+          service.openTabIn(sessionId, 'browser', { params: { url } });
+          await sleep(350);
+          const afterCount = count();
+          if (beforeCount !== null && afterCount !== null && afterCount <= beforeCount) {
+            throw new Error(
+              `the conversation ${sessionId} has no sidebar surface in this window yet (it has not been shown since ` +
+                'DSH started), so a page cannot be created in it. Open that conversation once, then retry.',
+            );
+          }
+          return { tabId: null, sessionId, address: null, url, background: true, identified: afterCount !== beforeCount };
+        }
 
         // Capture the tab set BEFORE opening: `openTabs` is a published snapshot
         // store that catches up a beat later, so it cannot be asked "what did you
@@ -1005,14 +1039,14 @@ window.__ModuleLoader__.load({
             .getSnapshot()
             .find((tab) => tab.kind === 'browser' && !before.has(tab.tabId));
           if (entry !== undefined) {
-            return { tabId: entry.tabId, sessionId: entry.sessionId, address: entry.contentId, url };
+            return { tabId: entry.tabId, sessionId: entry.sessionId, address: entry.contentId, url, background: false };
           }
           const active = service.active();
           if (active && active.kind === 'browser' && !before.has(active.id)) {
-            return { tabId: active.id, sessionId: null, address: active.contentId, url };
+            return { tabId: active.id, sessionId: null, address: active.contentId, url, background: false };
           }
           if (Date.now() > identifyDeadline) {
-            return { tabId: null, sessionId: null, address: null, url, identified: false };
+            return { tabId: null, sessionId: null, address: null, url, identified: false, background: false };
           }
           await sleep(100);
         }
@@ -1144,7 +1178,7 @@ window.__ModuleLoader__.load({
       /** @param {{ requestId: string, kind: string, url?: string, pageId?: string }} command */
       async function handle(command) {
         if (command.kind === 'open-tab') {
-          const value = await openTab(command.url);
+          const value = await openTab(command.url, command.sessionId);
           await call('result', { requestId: command.requestId, ok: true, value });
           return;
         }
@@ -1330,6 +1364,7 @@ window.__ModuleLoader__.load({
     };
   },
 });
+
 
 
 

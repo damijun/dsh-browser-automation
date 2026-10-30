@@ -78,13 +78,21 @@ export function createTools(runtime) {
             pageId: string('Stable page handle for every later call.'),
             url: string('The URL the tab reports after loading.'),
             title: string('Current page title, including the page marker.'),
+            background: boolean(
+              'True when the tab was created in a conversation that is not on screen: the page has no visible ' +
+                'surface, so it will not be focused and cannot be screenshotted.',
+            ),
           },
           required: ['pageId', 'url'],
         },
         render: renderWith(
           (value) =>
             `Opened ${value.url}\npageId: ${value.pageId}` +
-            (value.title ? `\ntitle: ${value.title}` : ''),
+            (value.title ? `\ntitle: ${value.title}` : '') +
+            (value.background
+              ? '\nbackground: this conversation is not the one on screen, so the tab was created in the background — ' +
+                'it is not focused and cannot be screenshotted; every other tool works on it.'
+              : ''),
         ),
       },
       async execute(args, exec) {
@@ -280,7 +288,9 @@ export function createTools(runtime) {
         'The image is the sidebar tab as the user sees it. ' +
         'Fails immediately when the DSH window itself is minimized or off screen: a hidden window produces no frames, ' +
         'so ask the user to keep the window visible for screenshot runs. Every tool that does not need pixels still works. ' +
-        'Captures the sidebar as it is: the image is the current sidebar size, and nothing is resized to fit it.',
+        'Captures the sidebar as it is: the image is the current sidebar size, and nothing is resized to fit it. ' +
+        'A page opened from a conversation that is not on screen has no surface at all, so it cannot be captured ' +
+        'either — drive it with the other tools instead.',
       parameters: {
         type: 'object',
         additionalProperties: false,
