@@ -206,7 +206,7 @@ export class Runtime {
         );
       }
       await this.cli.run(['--raw', 'tab-select', String(found.index)]);
-      const marked = await this.injectMarker(found, pageId);
+      const marked = await this.injectMarker({ ...found, pageId });
       this.manager.register({
         pageId,
         sessionId: request.sessionId,
@@ -277,20 +277,19 @@ export class Runtime {
    * Install (or replace) the marker on one tab: an init script so every later
    * navigation re-applies it, plus one eval for the document already loaded.
    *
-   * @param {{ index: number, title?: string, url?: string, current?: boolean }} tab
-   * @param {string} pageId
+   * @param {{ index: number, title?: string, url?: string, current?: boolean, pageId: string }} tab
    */
-  async injectMarker(tab, pageId) {
+  async injectMarker(tab) {
     const driver = this.ensureDriver();
-    const marked = await driver.installMarker(pageId, tab).catch(async (error) => {
+    const marked = await driver.installMarker(tab).catch(async (error) => {
       // A page that refuses init scripts (CSP or a non-document target) still gets
       // the one-shot marker, which is better than failing the whole open.
       this.log(`init script failed (${error.message}); falling back to a one-shot marker`);
-      return driver.mark(pageId, tab);
+      return driver.mark(tab);
     });
     const title = typeof marked?.title === 'string' ? marked.title : undefined;
     const url = typeof marked?.url === 'string' ? marked.url : undefined;
-    this.log(`marked tab ${tab.index} as ${pageId}`);
+    this.log(`marked tab ${tab.index} as ${tab.pageId}`);
     return { title, url };
   }
 
@@ -314,7 +313,7 @@ export class Runtime {
     const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
     const originalTitle = target.title.replace(/\s*\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/g, '').trim();
     await this.cli.run(['--raw', 'tab-select', String(target.index)]);
-    const marked = await this.injectMarker(target, pageId);
+    const marked = await this.injectMarker({ ...target, pageId });
     for (const previous of previousIds) this.manager.unregister(previous);
     this.manager.register({
       pageId,
@@ -502,7 +501,7 @@ export class Runtime {
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
-        const detail = await driver.snapshot(request.pageId, { depth: request.depth }, tab);
+        const detail = await driver.snapshot(tab, { depth: request.depth });
         return {
           title: tab.title,
           url: tab.url,
@@ -563,7 +562,7 @@ export class Runtime {
           if (plan.visible === false && plan.tabId && !elementTarget) {
             // Playwright's capture path with a deadline that matches a cold frame.
             await driver.screenshotToFile(
-              request.pageId,
+              tab,
               {
                 path: file,
                 fullPage: request.fullPage,
@@ -573,7 +572,7 @@ export class Runtime {
             );
           } else {
             await driver.screenshot(
-              request.pageId,
+              tab,
               { path: file, fullPage: request.fullPage, target: request.target },
               tab,
             );
@@ -632,7 +631,7 @@ export class Runtime {
       request.pageId,
       async (driver, tab) => ({
         result: await driver.click(
-          request.pageId,
+          tab,
           {
             ref: request.ref,
             button: request.button ?? undefined,
@@ -652,7 +651,7 @@ export class Runtime {
       request.pageId,
       async (driver, tab) => ({
         result: await driver.fill(
-          request.pageId,
+          tab,
           { ref: request.ref, text: request.text, submit: request.submit },
           tab,
         ),
@@ -666,7 +665,7 @@ export class Runtime {
     return this.onPage(
       request.pageId,
       async (driver, tab) => ({
-        result: await driver.press(request.pageId, { key: request.key }, tab),
+        result: await driver.press(tab, { key: request.key }),
       }),
       request.signal,
     );
@@ -678,7 +677,7 @@ export class Runtime {
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
-        const result = await driver.goto(request.pageId, { url }, tab);
+        const result = await driver.goto(tab, { url });
         this.manager.update(request.pageId, { url: result.reportedUrl ?? url, title: result.title });
         return { url: result.reportedUrl ?? url, title: result.title };
       },
@@ -708,7 +707,7 @@ export class Runtime {
               'Use browser_goto with an explicit URL instead.',
           );
         }
-        const result = await driver.reload(request.pageId, { url: target.url }, target);
+        const result = await driver.reload(target, { url: target.url });
         const url = result.reportedUrl ?? target.url;
         this.manager.update(request.pageId, { url, title: result.title ?? target.title });
         return { url, title: result.title ?? target.title };
@@ -721,7 +720,7 @@ export class Runtime {
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
-        const value = await driver.evaluate(request.pageId, request.expression, tab);
+        const value = await driver.evaluate(tab, request.expression);
         return { result: JSON.stringify(value ?? null) };
       },
       request.signal,
@@ -732,7 +731,7 @@ export class Runtime {
     return this.onPage(
       request.pageId,
       async (driver, tab) => ({
-        output: await driver.runCode(request.pageId, { code: request.code }, tab),
+        output: await driver.runCode(tab, { code: request.code }),
       }),
       request.signal,
     );
@@ -742,7 +741,7 @@ export class Runtime {
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
-        const text = await driver.console(request.pageId, { level: request.level }, tab);
+        const text = await driver.console(tab, { level: request.level });
         const limit = Number.isFinite(request.limit) ? Number(request.limit) : 50;
         const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '');
         return { messages: lines.slice(-limit).join('\n') };
@@ -1005,6 +1004,7 @@ export function requireBridge(bridge, tool) {
 }
 
 export { sessionTag, resolveIndex };
+
 
 
 

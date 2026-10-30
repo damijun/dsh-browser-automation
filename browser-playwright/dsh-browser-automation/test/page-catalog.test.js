@@ -159,7 +159,7 @@ test('executeOnResolvedTab does not re-resolve a tab resolved in the same call',
     },
   });
   const tab = { index: 1, current: true, title: '', url: '' };
-  const result = await driver.executeOnResolvedTab(ID_A, tab, async () => 'done');
+  const result = await driver.executeOnResolvedTab({ ...tab, pageId: ID_A }, async () => 'done');
   assert.equal(result, 'done');
   assert.equal(resolved, 0, 'no resolution when the tab is already known');
 });
@@ -174,7 +174,7 @@ test('executeOnResolvedTab re-resolves once after a failure and then gives up', 
   });
   const tab = { index: 1, current: true, title: '', url: '' };
   await assert.rejects(() =>
-    driver.executeOnResolvedTab(ID_A, tab, async () => {
+    driver.executeOnResolvedTab({ ...tab, pageId: ID_A }, async () => {
       throw new Error('tab went away');
     }),
   );
@@ -252,3 +252,4 @@ test('force still performs a fresh attach for diagnostics', async () => {
   await driver.ensureAttached({ force: true });
   assert.ok(calls.includes('--raw attach --cdp=http://127.0.0.1:9222'));
 });
+

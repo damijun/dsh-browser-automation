@@ -117,6 +117,10 @@ export function titleMarkerExpression(pageId, options = {}) {
         '        "z-index:2147483647!important;pointer-events:none!important;contain:layout style!important";',
         '      const shadow = host.attachShadow({ mode: "open" });',
         '      const pill = document.createElement("div");',
+        // Decorative and non-interactive: keep it out of the accessibility tree so a
+        // page snapshot does not surface a ref the model could try to click.
+        '      pill.setAttribute("role", "presentation");',
+        '      pill.setAttribute("aria-hidden", "true");',
         '      pill.style.cssText = "all:initial;display:inline-flex;align-items:center;gap:6px;" +',
         '        "font:500 12px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#fff;" +',
         '        "background:rgba(17,24,39,.86);border-radius:999px;padding:4px 12px 4px 9px;" +',
@@ -126,6 +130,7 @@ export function titleMarkerExpression(pageId, options = {}) {
         '        "background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.28)";',
         '      const label = document.createElement("span");',
         '      label.style.cssText = "all:initial;font:inherit;color:#fff";',
+        '      label.setAttribute("aria-hidden", "true");',
         '      label.textContent = BADGE_TEXT;',
         '      pill.appendChild(dot);',
         '      pill.appendChild(label);',
@@ -210,5 +215,6 @@ export const probeMarkerExpression = [
   '  pageId: window.__dshBrowserAutomation ? window.__dshBrowserAutomation.pageId : null,',
   '}))()',
 ].join('\n');
+
 
 

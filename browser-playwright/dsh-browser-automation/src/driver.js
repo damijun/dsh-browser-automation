@@ -165,21 +165,6 @@ export class PageDriver {
   }
 
   /**
-   * Resolve a page id to its tab.
-   *
-   * Kept as the historical name for {@link resolvePage}; `attach: false` skips the
-   * attach probe for callers that already know the daemon is connected.
-   *
-   * @param {string} pageId
-   * @param {{ attach?: boolean }} [options]
-   * @returns {Promise<ResolvedTab>}
-   */
-  async resolve(pageId, options = {}) {
-    if (options.attach === false) return this.resolveTabIndex(pageId);
-    return this.resolvePage(pageId);
-  }
-
-  /**
    * One `run-code`: every page in the daemon's context, with its in-page identity.
    *
    * `context.pages()` order equals `tab-list` order in this environment (verified on
@@ -289,21 +274,27 @@ export class PageDriver {
    * once if the index went stale between resolving and selecting (the user can close a
    * tab at any moment).
    *
-   * This is the only place that selects and retries. `withPage` is a thin wrapper over
-   * it, so resolving and executing never happen twice for one call.
+   * This is the only place that selects and retries, and it takes nothing but the tab:
+   * the tab carries its own `pageId`, which is what a re-resolution needs. The runtime
+   * layer addresses pages by pageId, resolves once, and from here down everything is a
+   * tab index.
    *
    * @template T
-   * @param {string} pageId
-   * @param {ResolvedTab} tab
+   * @param {ResolvedTab & { pageId?: string }} tab
    * @param {(tab: ResolvedTab) => Promise<T>} operation
    * @returns {Promise<T>}
    */
-  async executeOnResolvedTab(pageId, tab, operation) {
+  async executeOnResolvedTab(tab, operation) {
     let lastError;
     let known = tab;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const hit = known ?? (await this.resolvePage(pageId));
+      let hit = known;
       known = undefined;
+      if (!hit) {
+        // Only a tab that knows its pageId can be relocated.
+        if (!tab.pageId) break;
+        hit = await this.resolvePage(tab.pageId);
+      }
       try {
         if (hit.current !== true) await this.cli.run(['--raw', 'tab-select', String(hit.index)]);
         return await operation(hit);
@@ -312,62 +303,40 @@ export class PageDriver {
         this.log(`tab ${hit.index} failed, re-resolving: ${error.message}`);
       }
     }
-    throw lastError ?? new CliError(`Could not select the tab for ${pageId}.`, { code: 'PAGE_NOT_FOUND' });
+    throw lastError ?? new CliError(`Could not select the tab for ${tab.pageId ?? tab.index}.`, { code: 'PAGE_NOT_FOUND' });
   }
 
   /**
-   * The core execution template: resolve once (unless a tab was resolved earlier in
-   * the same call), then delegate to {@link executeOnResolvedTab}.
-   *
-   * @template T
-   * @param {string} pageId
-   * @param {(tab: ResolvedTab) => Promise<T>} operation
-   * @param {ResolvedTab} [target] a tab resolved earlier in the same call
-   * @returns {Promise<T>}
-   */
-  async withPage(pageId, operation, target) {
-    const tab = target ?? (await this.resolvePage(pageId));
-    return this.executeOnResolvedTab(pageId, tab, operation);
-  }
-
-  /**
-   * Evaluate one JavaScript expression in the page behind `pageId`.
+   * Evaluate one JavaScript expression in a resolved tab.
    *
    * playwright-cli wraps the argument as `() => (<expr>)`, so callers must pass
    * an expression or an IIFE — never a statement list.
    *
-   * @param {string} pageId
+   * @param {ResolvedTab} tab
    * @param {string} expression
-   * @param {ResolvedTab} [target]
    */
-  async evaluate(pageId, expression, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const { stdout } = await this.cli.run(['--raw', 'eval', expression]);
-        return parseEvalOutput(stdout);
-      },
-      target,
-    );
+  async evaluate(tab, expression) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const { stdout } = await this.cli.run(['--raw', 'eval', expression]);
+      return parseEvalOutput(stdout);
+    });
   }
 
   /**
    * Append the page marker, replacing any marker from a previous claim, and keep
    * it attached across the page's own title rewrites.
    *
-   * @param {string} pageId
-   * @param {ResolvedTab} [target]
+   * The marker is written for `tab.pageId`, so the tab has to carry one (the resolve
+   * functions set it; `browser_open`/`browser_claim` hand one in after minting).
+   *
+   * @param {ResolvedTab & { pageId: string }} tab
    * @returns {Promise<{ title?: string, url?: string } | undefined>}
    */
-  async mark(pageId, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId, this.marker)]);
-        return parseMarkerOutput(stdout);
-      },
-      target,
-    );
+  async mark(tab) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(tab.pageId, this.marker)]);
+      return parseMarkerOutput(stdout);
+    });
   }
 
   /**
@@ -377,57 +346,42 @@ export class PageDriver {
    * covers the document that is already loaded (an init script only runs on the
    * next one). Two CLI calls, paid once per open/claim.
    *
-   * @param {string} pageId
-   * @param {ResolvedTab} [target]
+   * @param {ResolvedTab & { pageId: string }} tab
    * @returns {Promise<{ title?: string, url?: string } | undefined>}
    */
-  async installMarker(pageId, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        await this.cli.run(['--raw', 'run-code', installMarkerCode(pageId, this.marker)], { timeoutMs: 60_000 });
-        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId, this.marker)]);
-        return parseMarkerOutput(stdout);
-      },
-      target,
-    );
+  async installMarker(tab) {
+    return this.executeOnResolvedTab(tab, async () => {
+      await this.cli.run(['--raw', 'run-code', installMarkerCode(tab.pageId, this.marker)], { timeoutMs: 60_000 });
+      const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(tab.pageId, this.marker)]);
+      return parseMarkerOutput(stdout);
+    });
   }
 
   /**
    * Read back the marker state of the current tab (diagnostics).
    *
-   * @param {string} pageId
-   * @param {ResolvedTab} [target]
+   * @param {ResolvedTab} tab
    */
-  async probe(pageId, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const { stdout } = await this.cli.run(['--raw', 'eval', probeMarkerExpression]);
-        return parseMarkerOutput(stdout);
-      },
-      target,
-    );
+  async probe(tab) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const { stdout } = await this.cli.run(['--raw', 'eval', probeMarkerExpression]);
+      return parseMarkerOutput(stdout);
+    });
   }
 
   /**
-   * @param {string} pageId
+   * @param {ResolvedTab} tab
    * @param {{ depth?: number }} [options]
-   * @param {ResolvedTab} [target]
    */
-  async snapshot(pageId, options = {}, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const args = ['--raw', 'snapshot'];
-        if (options.depth) args.push(`--depth=${options.depth}`);
-        const { stdout } = await this.cli.run(args);
-        const text = stdout.trim();
-        const refs = [...text.matchAll(/\[ref=([^\]]+)\]/g)].map((match) => match[1]);
-        return { snapshot: text, refCount: refs.length };
-      },
-      target,
-    );
+  async snapshot(tab, options = {}) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const args = ['--raw', 'snapshot'];
+      if (options.depth) args.push(`--depth=${options.depth}`);
+      const { stdout } = await this.cli.run(args);
+      const text = stdout.trim();
+      const refs = [...text.matchAll(/\[ref=([^\]]+)\]/g)].map((match) => match[1]);
+      return { snapshot: text, refCount: refs.length };
+    });
   }
 
   /**
@@ -435,22 +389,17 @@ export class PageDriver {
    * Playwright's default 5s capture deadline, which a tab that was just brought
    * to the front can exceed. Prefer {@link screenshotToFile} for those.
    *
-   * @param {string} pageId
+   * @param {ResolvedTab} tab
    * @param {{ path: string, fullPage?: boolean, target?: string }} options
-   * @param {ResolvedTab} [target]
    */
-  async screenshot(pageId, options, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const args = ['--raw', 'screenshot', `--filename=${options.path}`];
-        if (options.fullPage) args.push('--full-page');
-        if (options.target) args.push(options.target);
-        const { stdout, stderr } = await this.cli.run(args, { timeoutMs: 60_000 });
-        return { path: options.path, output: `${stdout}${stderr}`.trim() };
-      },
-      target,
-    );
+  async screenshot(tab, options) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const args = ['--raw', 'screenshot', `--filename=${options.path}`];
+      if (options.fullPage) args.push('--full-page');
+      if (options.target) args.push(options.target);
+      const { stdout, stderr } = await this.cli.run(args, { timeoutMs: 60_000 });
+      return { path: options.path, output: `${stdout}${stderr}`.trim() };
+    });
   }
 
   /**
@@ -462,166 +411,133 @@ export class PageDriver {
    * `page.screenshot({ path })` writes the file there directly — no bytes travel
    * through the command output.
    *
-   * @param {string} pageId
+   * @param {ResolvedTab} tab
    * @param {{ path: string, fullPage?: boolean, timeoutMs?: number }} options
-   * @param {ResolvedTab} [target]
    */
-  async screenshotToFile(pageId, options, target) {
+  async screenshotToFile(tab, options) {
     const settings = [
       `path: ${JSON.stringify(options.path)}`,
       `timeout: ${Number(options.timeoutMs ?? this.screenshotTimeoutMs)}`,
       ...(options.fullPage ? ['fullPage: true'] : []),
     ].join(', ');
     const code = `async page => { await page.screenshot({ ${settings} }); return "saved"; }`;
-    return this.withPage(
-      pageId,
-      async () => {
-        await this.cli.run(['--raw', 'run-code', code], { timeoutMs: 60_000 });
-        return { path: options.path };
-      },
-      target,
-    );
+    return this.executeOnResolvedTab(tab, async () => {
+      await this.cli.run(['--raw', 'run-code', code], { timeoutMs: 60_000 });
+      return { path: options.path };
+    });
   }
 
   /**
-   * @param {string} pageId
+   * @param {ResolvedTab} tab
    * @param {{ ref: string, button?: string, modifiers?: string[], double?: boolean }} options
-   * @param {ResolvedTab} [target]
    */
-  async click(pageId, options, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const args = ['--raw', options.double ? 'dblclick' : 'click', options.ref];
-        if (options.button) args.push(options.button);
-        for (const modifier of options.modifiers ?? []) args.push(`--modifiers=${modifier}`);
-        const { stdout } = await this.cli.run(args);
-        return actionOutput(stdout);
-      },
-      target,
-    );
+  async click(tab, options) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const args = ['--raw', options.double ? 'dblclick' : 'click', options.ref];
+      if (options.button) args.push(options.button);
+      for (const modifier of options.modifiers ?? []) args.push(`--modifiers=${modifier}`);
+      const { stdout } = await this.cli.run(args);
+      return actionOutput(stdout);
+    });
   }
 
   /**
-   * @param {string} pageId
+   * @param {ResolvedTab} tab
    * @param {{ ref: string, text: string, submit?: boolean }} options
-   * @param {ResolvedTab} [target]
    */
-  async fill(pageId, options, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const args = ['--raw', 'fill', options.ref, options.text];
-        if (options.submit) args.push('--submit');
-        const { stdout } = await this.cli.run(args);
-        return actionOutput(stdout);
-      },
-      target,
-    );
+  async fill(tab, options) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const args = ['--raw', 'fill', options.ref, options.text];
+      if (options.submit) args.push('--submit');
+      const { stdout } = await this.cli.run(args);
+      return actionOutput(stdout);
+    });
   }
 
   /**
-   * @param {string} pageId
+   * @param {ResolvedTab} tab
    * @param {{ key: string }} options
-   * @param {ResolvedTab} [target]
    */
-  async press(pageId, options, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const { stdout } = await this.cli.run(['--raw', 'press', options.key]);
-        return actionOutput(stdout);
-      },
-      target,
-    );
+  async press(tab, options) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const { stdout } = await this.cli.run(['--raw', 'press', options.key]);
+      return actionOutput(stdout);
+    });
   }
 
   /**
-   * Navigate the page behind a page id, then restore the marker: a navigation
-   * destroys the observer and the page's own title rewrite would drop the
-   * marker, so the marker is re-applied and reported back.
+   * Navigate a resolved tab, then restore the marker: a navigation destroys the
+   * observer and the page's own title rewrite would drop the marker, so the marker is
+   * re-applied and reported back.
    *
-   * @param {string} pageId
+   * @param {ResolvedTab & { pageId?: string }} tab
    * @param {{ url: string }} options
-   * @param {ResolvedTab} [target]
    */
-  async goto(pageId, options, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        await this.cli.run(['--raw', 'goto', options.url], { timeoutMs: 60_000 });
-        const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId, this.marker)], {
-          retries: 1,
-        });
-        const parsed = parseEvalOutput(stdout);
-        let marked = parsed;
-        if (typeof parsed === 'string') {
-          try {
-            marked = JSON.parse(parsed);
-          } catch {
-            marked = { title: parsed };
-          }
+  async goto(tab, options) {
+    return this.executeOnResolvedTab(tab, async () => {
+      await this.cli.run(['--raw', 'goto', options.url], { timeoutMs: 60_000 });
+      const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(tab.pageId, this.marker)], {
+        retries: 1,
+      });
+      const parsed = parseEvalOutput(stdout);
+      let marked = parsed;
+      if (typeof parsed === 'string') {
+        try {
+          marked = JSON.parse(parsed);
+        } catch {
+          marked = { title: parsed };
         }
-        return { url: options.url, title: marked?.title, reportedUrl: marked?.url };
-      },
-      target,
-    );
+      }
+      return { url: options.url, title: marked?.title, reportedUrl: marked?.url };
+    });
   }
 
   /**
-   * Reload the page behind a page id, implemented as "navigate to the same URL".
+   * Reload a resolved tab, implemented as "navigate to the same URL".
    *
    * `playwright-cli reload` is never used: measured on a real window, it reloads the
    * whole DSH page no matter which tab is current, and every sidebar browser page is
    * lost with it. `goto <current url>` reaches only the tab this id resolved to, so a
    * reload can never touch the shell.
    *
-   * @param {string} pageId
-   * @param {{ url: string }} target
-   * @param {ResolvedTab} [resolved]
+   * @param {ResolvedTab} tab
+   * @param {{ url: string }} options
    */
-  async reload(pageId, target, resolved) {
-    return this.goto(pageId, { url: target.url }, resolved);
+  async reload(tab, options) {
+    return this.goto(tab, { url: options.url });
   }
 
   /**
-   * @param {string} pageId
+   * @param {ResolvedTab} tab
    * @param {{ level?: string }} [options]
-   * @param {ResolvedTab} [target]
    */
-  async console(pageId, options = {}, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const args = ['--raw', 'console'];
-        if (options.level) args.push(options.level);
-        const { stdout } = await this.cli.run(args);
-        return stdout.trim();
-      },
-      target,
-    );
+  async console(tab, options = {}) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const args = ['--raw', 'console'];
+      if (options.level) args.push(options.level);
+      const { stdout } = await this.cli.run(args);
+      return stdout.trim();
+    });
   }
 
   /**
-   * @param {string} pageId
+   * Run a Playwright snippet against a resolved tab.
+   *
+   * The snippet may rewrite the document (`page.setContent`) or replace its head,
+   * which discards the marker without any navigation that would re-run the init
+   * script. Re-applying it here keeps the pageId resolvable.
+   *
+   * @param {ResolvedTab & { pageId?: string }} tab
    * @param {{ code: string }} options
-   * @param {ResolvedTab} [target]
    */
-  async runCode(pageId, options, target) {
-    return this.withPage(
-      pageId,
-      async () => {
-        const { stdout } = await this.cli.run(['--raw', 'run-code', options.code], { timeoutMs: 120_000 });
-        const output = stdout.trim();
-        // A snippet may rewrite the document (page.setContent) or replace its head,
-        // which discards the marker without any navigation that would re-run the
-        // init script. Re-applying it here keeps the pageId resolvable.
-        const { stdout: marked } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(pageId, this.marker)]);
-        const marker = parseMarkerOutput(marked);
-        return { output, title: marker?.title, url: marker?.url };
-      },
-      target,
-    );
+  async runCode(tab, options) {
+    return this.executeOnResolvedTab(tab, async () => {
+      const { stdout } = await this.cli.run(['--raw', 'run-code', options.code], { timeoutMs: 120_000 });
+      const output = stdout.trim();
+      const { stdout: marked } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(tab.pageId, this.marker)]);
+      const marker = parseMarkerOutput(marked);
+      return { output, title: marker?.title, url: marker?.url };
+    });
   }
 
   /** Current tab index, or -1 when nothing is attached. */

@@ -198,18 +198,27 @@ resolvePageId(tabIndex)   tab-list index -> pageId
 - 找不到时 `PAGE_NOT_FOUND` 会**附带当前打开页的清单**（`0: dsh-app://app/ (unmarked); 1: https://… (dshpg-…)`），
   并提示"重开/重新 claim"。
 
-## 4.2 解析与执行职责
+## 4.2 分层与职责
+
+**分层规则**：runtime 层只认 `pageId`（AI 传进来的就是它）；解析一次之后，driver 层只认 `tab`
+（内含 `index` / `current` / `pageId`）。driver 里只有三个解析函数"说 pageId"，其余动作全部收 `tab`。
 
 ```text
-runtime.onPage(pageId, …)         每页锁 + 首调用 attach + resolvePage 一次
-  -> driver.resolvePage(pageId)   只解析：catalog -> tab
-  -> operation(driver, tab)       动作内部走 withPage(pageId, fn, tab)
-       -> driver.executeOnResolvedTab(pageId, tab, fn)
-            tab-select（若目标不是 current）+ 执行 + index 失效时再解析一次（仅一次）
+runtime.browser_xxx({ pageId, … })
+  -> requirePageId(pageId)             格式检查（validPageId）
+  -> SessionManager.withLock(pageId)   同一个 pageId 串行，不同 pageId 并行
+  -> driver.resolvePage(pageId)        一次 catalog -> tab { index, current, title, url, pageId }
+  -> operation(driver, tab)            工具体
+       -> driver.click(tab, options)   driver 层：只用 tab.index 选页
+            -> executeOnResolvedTab(tab, () => CLI 动作)
+                 tab-select（仅当 !current）+ 执行 + 失败时用 tab.pageId 重新解析一次
 ```
 
-同一页只解析一次（`onPage` 解析后把 tab 传下去），避免"两层各自解析"的重复；`withPage` 现在只是
-`resolvePage` + `executeOnResolvedTab` 的小包装，保留它是因为 10+ 处调用点在用。
+- `executeOnResolvedTab(tab, operation)` **只收 tab**：重新解析需要的 pageId 就在 tab 上。
+- **没有 `withPage`、也没有 `driver.resolve` 别名**：解析只发生在 `resolvePage`，执行只发生在
+  `executeOnResolvedTab`，同一页在一次调用里只解析一次。
+- `browser_open` / `browser_claim` 是唯一"先有 pageId 再补 tab"的方向：把 mint 出来的 pageId 合进 tab
+  （`{ ...found, pageId }`）后交给 `installMarker(tab)`，所以标记函数也只收 tab。
 
 ## 4.3 attach 是"先探活"
 
