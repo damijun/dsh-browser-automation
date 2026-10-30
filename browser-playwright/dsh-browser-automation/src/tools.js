@@ -78,13 +78,12 @@ export function createTools(runtime) {
             pageId: string('Stable page handle for every later call.'),
             url: string('The URL the tab reports after loading.'),
             title: string('Current page title, including the page marker.'),
-            index: integer('Current playwright-cli tab index (informational only; never cache it).'),
           },
-          required: ['pageId', 'url', 'index'],
+          required: ['pageId', 'url'],
         },
         render: renderWith(
           (value) =>
-            `Opened ${value.url}\npageId: ${value.pageId}\ntab index: ${value.index}` +
+            `Opened ${value.url}\npageId: ${value.pageId}` +
             (value.title ? `\ntitle: ${value.title}` : ''),
         ),
       },
@@ -122,17 +121,16 @@ export function createTools(runtime) {
             pageId: string('Stable page handle for every later call.'),
             title: string('Page title before the marker was replaced.'),
             url: string('Current URL.'),
-            index: integer('Current playwright-cli tab index (informational only).'),
             note: string('The note that was passed in, if any.'),
             replacedExistingPageId: string(
               'Present when the tab already carried a marker: the pageId it lost, now unregistered.',
             ),
           },
-          required: ['pageId', 'url', 'index'],
+          required: ['pageId', 'url'],
         },
         render: renderWith(
           (value) =>
-            `Claimed "${value.title ?? ''}" (${value.url})\npageId: ${value.pageId}\ntab index: ${value.index}`,
+            `Claimed "${value.title ?? ''}" (${value.url})\npageId: ${value.pageId}`,
         ),
       },
       async execute(args, exec) {
@@ -146,7 +144,7 @@ export function createTools(runtime) {
       description:
         'List browser tabs with their page handles. scope="session" (default) shows only pages this DSH session controls; ' +
         'scope="all" also shows tabs other sessions control and unmarked tabs. ' +
-        'Always re-read this instead of reusing an index from an earlier call.',
+        'Always re-read this instead of reusing a page handle from an earlier call.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -170,6 +168,8 @@ export function createTools(runtime) {
           },
           required: ['count', 'pages'],
         },
+        // No tab index in the rendered line: the model addresses pages by pageId, and
+        // the index is the one piece of a row it could never pass back to a tool.
         render: renderWith((value) => {
           const body =
             value.pages.length === 0
@@ -177,7 +177,7 @@ export function createTools(runtime) {
               : value.pages
                   .map(
                     (page) =>
-                      `[${page.index}]${page.current ? ' (current)' : ''} ${page.pageId ?? '(unmarked)'} — ${page.title ?? ''} — ${page.url}`,
+                      `${page.current ? '(current) ' : ''}${page.pageId ?? '(unmarked)'} — ${page.title ?? ''} — ${page.url}`,
                   )
                   .join('\n');
           // The warning is the whole point when the sidebar looks non-empty and this
@@ -248,13 +248,12 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer(),
             title: string(),
             url: string(),
             refCount: integer(),
             snapshot: string('The snapshot text, exactly as playwright-cli produced it.'),
           },
-          required: ['pageId', 'index', 'refCount', 'snapshot'],
+          required: ['pageId', 'refCount', 'snapshot'],
         },
         render: renderWith((value) => value.snapshot),
       },
@@ -292,10 +291,9 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer('Current tab index (informational only).'),
             path: string('Absolute path of the written PNG.'),
           },
-          required: ['pageId', 'index', 'path'],
+          required: ['pageId', 'path'],
         },
         render: renderWith((value) => `Screenshot saved to ${value.path}`),
       },
@@ -339,12 +337,11 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer(),
             result: string('playwright-cli output.'),
           },
-          required: ['pageId', 'index'],
+          required: ['pageId'],
         },
-        render: renderWith((value) => `Clicked ${value.result || 'ok'} on tab ${value.index}.`),
+        render: renderWith((value) => `Clicked ${value.result || 'ok'}.`),
       },
       async execute(args, exec) {
         requireSession(exec);
@@ -383,12 +380,11 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer(),
             result: string(),
           },
-          required: ['pageId', 'index'],
+          required: ['pageId'],
         },
-        render: renderWith((value) => `Filled ${value.result || 'ok'} on tab ${value.index}.`),
+        render: renderWith((value) => `Filled ${value.result || 'ok'}.`),
       },
       async execute(args, exec) {
         requireSession(exec);
@@ -422,12 +418,11 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer(),
             result: string(),
           },
-          required: ['pageId', 'index'],
+          required: ['pageId'],
         },
-        render: renderWith((value) => `Pressed ${value.result || 'ok'} on tab ${value.index}.`),
+        render: renderWith((value) => `Pressed ${value.result || 'ok'}.`),
       },
       async execute(args, exec) {
         requireSession(exec);
@@ -456,11 +451,10 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer(),
             url: string(),
             title: string(),
           },
-          required: ['pageId', 'index', 'url'],
+          required: ['pageId', 'url'],
         },
         render: renderWith((value) => `Navigated to ${value.url}${value.title ? ` — ${value.title}` : ''}.`),
       },
@@ -490,11 +484,10 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer(),
             url: string(),
             title: string(),
           },
-          required: ['pageId', 'index', 'url'],
+          required: ['pageId', 'url'],
         },
         render: renderWith((value) => `Reloaded ${value.url}${value.title ? ` — ${value.title}` : ''}.`),
       },
@@ -525,10 +518,9 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer(),
             result: string('JSON.stringify of the evaluated value.'),
           },
-          required: ['pageId', 'index', 'result'],
+          required: ['pageId', 'result'],
         },
         render: renderWith((value) => value.result),
       },
@@ -565,10 +557,9 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer(),
             output: string('playwright-cli output.'),
           },
-          required: ['pageId', 'index', 'output'],
+          required: ['pageId', 'output'],
         },
         render: renderWith((value) => value.output),
       },
@@ -601,10 +592,9 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            index: integer(),
             messages: string(),
           },
-          required: ['pageId', 'index', 'messages'],
+          required: ['pageId', 'messages'],
         },
         render: renderWith((value) => value.messages || '(no console messages)'),
       },

@@ -174,7 +174,6 @@ test('claim takes over the visible page even when the CLI current tab is elsewhe
   assert.equal(claimed.url, 'https://visible.test/x');
   // The returned title is the tab's own title before the marker was installed.
   assert.equal(claimed.title, 'Visible');
-  assert.equal(claimed.index, 2);
   assert.equal(claimed.note, 'user logged in');
   assert.equal(claimed.replacedExistingPageId, undefined);
   assert.deepEqual(cliCalls[0], ['--raw', 'tab-select', '2']);
@@ -200,7 +199,6 @@ test('claim matches the visible URL across a trailing slash and a hash', async (
   const { runtime } = harness({ bridge, tabs });
   assert.equal(samePage(tabs[0].url, 'https://visible.test/x/'), true);
   const claimed = await runtime.claimPage({ sessionId: 's1' });
-  assert.equal(claimed.index, 1);
 });
 
 test('claim refuses to run when the page half went quiet', async () => {
@@ -210,6 +208,7 @@ test('claim refuses to run when the page half went quiet', async () => {
   });
   await assert.rejects(() => runtime.claimPage({ sessionId: 's1' }), /has gone quiet/);
 });
+
 
 
 

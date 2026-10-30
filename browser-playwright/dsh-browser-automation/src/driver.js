@@ -52,11 +52,19 @@ export function actionOutput(stdout) {
 }
 
 /**
+ * A page resolved to a playwright-cli tab.
+ *
+ * `title`/`url` come from the page itself (one `evaluate` in the catalog), not from
+ * tab-list, so they survive a stale tab chip and reflect redirects. `pageId` is what
+ * relocation needs; `addressedBy` says which identity found it.
+ *
  * @typedef {object} ResolvedTab
- * @property {number} index
- * @property {boolean} current
- * @property {string} title
- * @property {string} url
+ * @property {number} index     tab-list index, valid for this call only
+ * @property {boolean} current  the daemon's current tab (`candidate === page`)
+ * @property {string} title     document.title, marker included
+ * @property {string} url       location.href, post-redirect
+ * @property {string} [pageId]  the in-page identity, when the tab came from a resolve
+ * @property {'page' | 'title' | null} [addressedBy] primary identity vs title fallback
  */
 
 /**

@@ -49,7 +49,6 @@ test('reload acts on the resolved page and records the new title', async () => {
 
   const result = await runtime.reload({ pageId: PAGE_ID });
   assert.equal(result.pageId, PAGE_ID);
-  assert.equal(result.index, 3);
   assert.equal(result.url, 'https://example.test/');
   assert.equal(result.title, 'Reloaded title');
   // Reload navigates to the page's own URL — never `playwright-cli reload`, which
@@ -152,6 +151,7 @@ test('a pageId that resolves to nothing fails before any reload', async () => {
   await assert.rejects(() => runtime.reload({ pageId: PAGE_ID }), /PAGE_NOT_FOUND/);
   assert.equal(reloaded, false);
 });
+
 
 
 

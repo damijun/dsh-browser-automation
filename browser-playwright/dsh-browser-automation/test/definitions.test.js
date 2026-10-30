@@ -147,16 +147,17 @@ test('every field the runtime can add is declared in the output schema', () => {
     browser_status: ['bridgeError'],
   };
   // `browser_close` is a UI action that does not go through Runtime.onPage, so it
-  // reports no tab index — the one page-scoped tool where that is correct.
+  // reports no page fields — the one page-scoped tool where that is correct.
   const notOnPage = new Set(['browser_close']);
   const problems = [];
   for (const tool of createTools(stubRuntime)) {
     const schema = tool.output.schema;
     const declared = new Set(Object.keys(schema.properties ?? {}));
-    // Every other page-scoped tool goes through Runtime.onPage, which adds these.
+    // Every other page-scoped tool goes through Runtime.onPage, which adds pageId.
+    // The tab index is deliberately absent: the model addresses pages by pageId only.
     const pageScoped = Object.hasOwn(tool.parameters.properties ?? {}, 'pageId');
     if (pageScoped && !notOnPage.has(tool.name)) {
-      for (const field of ['pageId', 'index']) {
+      for (const field of ['pageId']) {
         if (!declared.has(field)) problems.push(`${tool.name}: missing output field ${field}`);
       }
     }
@@ -587,6 +588,7 @@ test('sanitize removes undefined so tool results stay lossless JSON', () => {
   assert.equal(sanitize(undefined), null);
   assert.throws(() => sanitize({ big: 1n }));
 });
+
 
 
 

@@ -220,7 +220,6 @@ export class Runtime {
         pageId,
         url: marked.url || found.url,
         title: marked.title,
-        index: found.index,
       };
     });
   }
@@ -327,7 +326,6 @@ export class Runtime {
       pageId,
       title: originalTitle,
       url: target.url,
-      index: target.index,
       note: request.note,
       replacedExistingPageId: previousIds[0],
     };
@@ -493,7 +491,9 @@ export class Runtime {
       // duplication §4.4 of the plan asks to remove.
       const tab = await driver.resolvePage(validPageId);
       const result = await operation(driver, tab);
-      return { pageId: validPageId, index: tab.index, ...result };
+      // The model addresses pages by pageId; the tab index is an internal detail and
+      // never leaves this layer.
+      return { pageId: validPageId, ...result };
     });
   }
 
@@ -1004,6 +1004,7 @@ export function requireBridge(bridge, tool) {
 }
 
 export { sessionTag, resolveIndex };
+
 
 
 

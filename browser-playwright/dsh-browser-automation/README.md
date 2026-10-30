@@ -141,6 +141,13 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 - 一次性静态提取 → `browser_evaluate`；
 - 脚本失败 → 回到 `snapshot` 重新探索，不要盲目重试。
 
+### 工具结果里没有 tab index
+
+模型只按 `pageId` 寻址，所以**普通工具的结果里不含 tab index**（`browser_open`/`claim` 的提示文案里也没有，
+`browser_list` 的行首也不再带 `[index]`），index 属于 driver 层内部细节。目前只有诊断工具
+`browser_status` 还保留 `currentIndex` 与 `pages[].index`：它是给**人**对照 `playwright-cli tab-list` 用的，
+调用频率低。如果以后要彻底去掉，用行内的 `current: true` 替代即可。
+
 ---
 
 ## 4. pageId 与标记机制
