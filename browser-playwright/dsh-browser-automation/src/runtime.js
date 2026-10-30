@@ -730,9 +730,18 @@ export class Runtime {
   async runCode(request) {
     return this.onPage(
       request.pageId,
-      async (driver, tab) => ({
-        output: await driver.runCode(tab, { code: request.code }),
-      }),
+      // driver.runCode answers with { output, title, url }: `title`/`url` are the
+      // post-run marker read-back, used to keep the registry honest when a snippet
+      // navigates. Only `output` crosses to the tool, whose schema says `output: string`
+      // — wrapping the whole object here made every call fail validation *after* the
+      // snippet had already run (a retry would repeat its side effects).
+      async (driver, tab) => {
+        const { output, title, url } = await driver.runCode(tab, { code: request.code });
+        if (typeof url === 'string' && url !== '' && (url !== tab.url || title !== tab.title)) {
+          this.manager.update(request.pageId, { url, title: title ?? tab.title });
+        }
+        return { output: typeof output === 'string' ? output : String(output ?? '') };
+      },
       request.signal,
     );
   }
@@ -1004,6 +1013,7 @@ export function requireBridge(bridge, tool) {
 }
 
 export { sessionTag, resolveIndex };
+
 
 
 

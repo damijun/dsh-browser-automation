@@ -274,7 +274,8 @@ export function createTools(runtime) {
         'plugin brings it to the front (expanding the right sidebar if it is collapsed) and leaves it there. ' +
         'The image is the sidebar tab as the user sees it. ' +
         'Fails immediately when the DSH window itself is minimized or off screen: a hidden window produces no frames, ' +
-        'so ask the user to keep the window visible for screenshot runs. Every tool that does not need pixels still works.',
+        'so ask the user to keep the window visible for screenshot runs. Every tool that does not need pixels still works. ' +
+        'Captures the sidebar as it is: the image is the current sidebar size, and nothing is resized to fit it.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -541,7 +542,10 @@ export function createTools(runtime) {
         'regression flows, batch extraction, or capturing a transient state atomically. ' +
         'When a script fails, go back to browser_snapshot and re-explore instead of retrying the script blindly. ' +
         'History navigation lives here too: page.goBack() / page.goForward() (same as the sidebar buttons); they are ' +
-        'deliberately not separate tools.',
+        'deliberately not separate tools. ' +
+        'Do not change the page geometry in a snippet: page.setViewportSize() and body zoom belong to the sidebar, ' +
+        'which DSH sizes. A page laid out wider than the sidebar comes back as a tiled screenshot (the page drawn ' +
+        'twice), so leave the viewport alone and screenshots stay clean.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -716,6 +720,8 @@ export function readLocale(name) {
   const url = new URL(`../locale/${name}.json`, import.meta.url);
   return JSON.parse(readFileSync(url, 'utf8'));
 }
+
+
 
 
 
