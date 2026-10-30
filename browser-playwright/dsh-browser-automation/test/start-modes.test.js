@@ -48,11 +48,14 @@ function harness({ bridge, tabs = [], marker = 'Marked' }) {
   // therefore from shelling out to playwright-cli during a unit test).
   runtime.driver = { cli, listTabs: async () => ({ tabs, ignored: [] }) };
   runtime.attach = async () => ({ tabs, ignored: [] });
-  runtime.injectMarker = async (target, pageId) => ({
-    title: `${marker} [${pageId}]`,
-    url: target.url,
-  });
-  return { runtime, cliCalls };
+  // The real installer selects the tab itself, inside the driver's CLI lock, so the
+  // contract worth asserting is "which tab was handed to it" — not a raw tab-select.
+  const marked = [];
+  runtime.injectMarker = async (target) => {
+    marked.push({ index: target.index, url: target.url, pageId: target.pageId });
+    return { title: `${marker} [${target.pageId}]`, url: target.url };
+  };
+  return { runtime, cliCalls, marked };
 }
 
 test('requireBridge names the tool and both recovery steps, and passes when live', () => {
@@ -166,7 +169,7 @@ test('claim takes over the visible page even when the CLI current tab is elsewhe
     tab(1, `https://other.test/ [${oldPageId}]`, 'Other'),
     tab(2, 'https://visible.test/x', 'Visible'),
   ];
-  const { runtime, cliCalls } = harness({ bridge, tabs, marker: 'Visible page' });
+  const { runtime, cliCalls, marked } = harness({ bridge, tabs, marker: 'Visible page' });
   runtime.manager.register({ pageId: oldPageId, sessionId: 's1', url: 'https://other.test/', source: 'open' });
 
   const claimed = await runtime.claimPage({ sessionId: 's1', note: 'user logged in' });
@@ -176,7 +179,13 @@ test('claim takes over the visible page even when the CLI current tab is elsewhe
   assert.equal(claimed.title, 'Visible');
   assert.equal(claimed.note, 'user logged in');
   assert.equal(claimed.replacedExistingPageId, undefined);
-  assert.deepEqual(cliCalls[0], ['--raw', 'tab-select', '2']);
+  // Claiming hands the visible tab (index 2) to the installer, which selects it under
+  // the driver's CLI lock; no standalone tab-select may happen out here.
+  assert.deepEqual(marked, [{ index: 2, url: 'https://visible.test/x', pageId: claimed.pageId }]);
+  assert.ok(
+    cliCalls.every((call) => !call.includes('tab-select')),
+    'claim must not select outside the driver lock',
+  );
   assert.equal(runtime.manager.get(claimed.pageId).tabId, 'tab7');
 });
 

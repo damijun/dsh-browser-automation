@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { CliError } from './cli.js';
 import { parseTabList, currentIndex, describeTabs } from './tab-list.js';
 import { titleMarkerExpression, probeMarkerExpression, installMarkerCode, extractPageIds } from './page-id.js';
@@ -97,6 +99,10 @@ export class PageDriver {
     // badge is painted by every marker (re)application, including after navigation.
     this.marker = options.marker && typeof options.marker === 'object' ? options.marker : {};
     this.attached = false;
+    // The daemon has one global "current tab"; every select+command pair must be
+    // serialized against every other one. See withCli().
+    this.cliQueue = Promise.resolve();
+    this.cliHolder = new AsyncLocalStorage();
   }
 
   /** Raw tab list. */
@@ -152,24 +158,35 @@ export class PageDriver {
    * also the documented remedy for a stuck attach on Windows.
    */
   async attachWithRetry() {
-    let lastError;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        return await this.cli.run(['--raw', 'attach', `--cdp=${this.cdpUrl}`], { timeoutMs: this.attachTimeoutMs });
-      } catch (error) {
-        lastError = error;
-        this.log(`attach attempt ${attempt + 1} failed: ${error.message}`);
-        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 400));
+    // Serialized too: `attach` opens a new CDP session, and doing that while another
+    // command is in flight kills that command (or strands its tab).
+    return this.withCli(async () => {
+      let lastError;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          return await this.cli.run(['--raw', 'attach', `--cdp=${this.cdpUrl}`], { timeoutMs: this.attachTimeoutMs });
+        } catch (error) {
+          lastError = error;
+          this.log(`attach attempt ${attempt + 1} failed: ${error.message}`);
+          if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 400));
+        }
       }
-    }
-    throw lastError;
+      throw lastError;
+    });
   }
 
-  /** Detach without closing the DSH application. */
+  /**
+   * Detach without closing the DSH application.
+   *
+   * Queued behind in-flight work: detaching mid-command rejects that command with
+   * "Session closed" (measured), so it waits instead of cutting in.
+   */
   async detach() {
-    const result = await this.cli.run(['--raw', 'detach'], { retries: 0 });
-    this.attached = false;
-    return result;
+    return this.withCli(async () => {
+      const result = await this.cli.run(['--raw', 'detach'], { retries: 0 });
+      this.attached = false;
+      return result;
+    });
   }
 
   /**
@@ -292,26 +309,83 @@ export class PageDriver {
    * @param {(tab: ResolvedTab) => Promise<T>} operation
    * @returns {Promise<T>}
    */
-  async executeOnResolvedTab(tab, operation) {
-    let lastError;
-    let known = tab;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      let hit = known;
-      known = undefined;
-      if (!hit) {
-        // Only a tab that knows its pageId can be relocated.
-        if (!tab.pageId) break;
-        hit = await this.resolvePage(tab.pageId);
-      }
-      try {
-        if (hit.current !== true) await this.cli.run(['--raw', 'tab-select', String(hit.index)]);
-        return await operation(hit);
-      } catch (error) {
-        lastError = error;
-        this.log(`tab ${hit.index} failed, re-resolving: ${error.message}`);
-      }
+  /**
+   * Serialize one "select then act" critical section across **all** pages.
+   *
+   * playwright-cli acts on a single global "current tab" pointer, so two callers that
+   * select different tabs and then run a command can interleave: caller B's
+   * `tab-select` lands between caller A's select and A's command, and A's command runs
+   * on B's page. Read operations then return the wrong page; writes (click, fill, press,
+   * goto) land on the wrong page *and* report success.
+   *
+   * The per-page lock in SessionManager cannot help: the conflict is precisely between
+   * *different* pageIds. So this is one mutex for the whole driver — the unit that owns
+   * the shared pointer.
+   *
+   * Re-entrant by async context (AsyncLocalStorage): `executeOnResolvedTab` calls
+   * `resolvePage`, and an attach/resolve may call back into the lock. A caller that
+   * already holds it passes straight through; a caller from a different async context
+   * queues, which is what keeps the pointer stable.
+   *
+   * @template T
+   * @param {() => Promise<T>} operation
+   * @returns {Promise<T>}
+   */
+  async withCli(operation) {
+    if (this.cliHolder.getStore() === this) return operation();
+    const previous = this.cliQueue;
+    let release;
+    this.cliQueue = new Promise((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await this.cliHolder.run(this, operation);
+    } finally {
+      release();
     }
-    throw lastError ?? new CliError(`Could not select the tab for ${tab.pageId ?? tab.index}.`, { code: 'PAGE_NOT_FOUND' });
+  }
+
+  /**
+   * Run `operation` against an already-resolved tab: select it, execute, and re-resolve
+   * once if the index went stale between resolving and selecting (the user can close a
+   * tab at any moment).
+   *
+   * This is the only place that selects and retries, and it takes nothing but the tab:
+   * the tab carries its own `pageId`, which is what a re-resolution needs. The runtime
+   * layer addresses pages by pageId, resolves once, and from here down everything is a
+   * tab index.
+   *
+   * The whole select+command section runs under {@link withCli}, so two pages can never
+   * swap the daemon's current tab under each other.
+   *
+   * @template T
+   * @param {ResolvedTab & { pageId?: string }} tab
+   * @param {(tab: ResolvedTab) => Promise<T>} operation
+   * @returns {Promise<T>}
+   */
+  async executeOnResolvedTab(tab, operation) {
+    return this.withCli(async () => {
+      let lastError;
+      let known = tab;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        let hit = known;
+        known = undefined;
+        if (!hit) {
+          // Only a tab that knows its pageId can be relocated.
+          if (!tab.pageId) break;
+          hit = await this.resolvePage(tab.pageId);
+        }
+        try {
+          if (hit.current !== true) await this.cli.run(['--raw', 'tab-select', String(hit.index)]);
+          return await operation(hit);
+        } catch (error) {
+          lastError = error;
+          this.log(`tab ${hit.index} failed, re-resolving: ${error.message}`);
+        }
+      }
+      throw lastError ?? new CliError(`Could not select the tab for ${tab.pageId ?? tab.index}.`, { code: 'PAGE_NOT_FOUND' });
+    });
   }
 
   /**
@@ -538,6 +612,7 @@ export class PageDriver {
     return { index: currentIndex(stdout) ?? -1, tabs: describeTabs(parseTabList(stdout).tabs) };
   }
 }
+
 
 
 

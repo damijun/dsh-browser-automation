@@ -205,7 +205,9 @@ export class Runtime {
             localFileHint(url),
         );
       }
-      await this.cli.run(['--raw', 'tab-select', String(found.index)]);
+      // No standalone tab-select here: installMarker runs inside the driver's global
+      // CLI lock and selects the tab itself. Selecting out here would race any other
+      // operation (the daemon has one shared current-tab pointer).
       const marked = await this.injectMarker({ ...found, pageId });
       this.manager.register({
         pageId,
@@ -311,7 +313,8 @@ export class Runtime {
     const previousIds = extractPageIds(target.title);
     const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
     const originalTitle = target.title.replace(/\s*\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/g, '').trim();
-    await this.cli.run(['--raw', 'tab-select', String(target.index)]);
+    // Selecting happens inside installMarker (under the driver's CLI lock), for the
+    // same reason as browser_open.
     const marked = await this.injectMarker({ ...target, pageId });
     for (const previous of previousIds) this.manager.unregister(previous);
     this.manager.register({
