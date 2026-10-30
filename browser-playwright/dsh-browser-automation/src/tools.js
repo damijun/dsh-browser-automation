@@ -499,44 +499,13 @@ export function createTools(runtime) {
     },
 
     {
-      name: 'browser_evaluate',
-      description:
-        'Evaluate one JavaScript expression inside a page and return the JSON-stringified result. ' +
-        'The expression must be a single expression or an IIFE — the CLI wraps it as () => (expression), so a statement list is a syntax error. ' +
-        'Use it for one-off static extraction; use browser_run_code when the path can be written as code up front.',
-      parameters: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          pageId: string('Page handle.'),
-          expression: string('Single JavaScript expression or IIFE.'),
-        },
-        required: ['pageId', 'expression'],
-      },
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            pageId: string(),
-            result: string('JSON.stringify of the evaluated value.'),
-          },
-          required: ['pageId', 'result'],
-        },
-        render: renderWith((value) => value.result),
-      },
-      async execute(args, exec) {
-        requireSession(exec);
-        return sanitize(
-          await runtime.evaluate({ pageId: args.pageId, expression: args.expression, signal: exec.signal }),
-        );
-      },
-    },
-
-    {
       name: 'browser_run_code',
       description:
         'Run a Playwright snippet against a page. The code is a function body invoked with `page` in scope. ' +
+        'This is also the read-only workhorse: there is no separate evaluate tool, so read a value with ' +
+        '`return await page.evaluate(() => document.title)` and read elements with ' +
+        "`return await page.locator('a').allTextContents()`. Return a string (JSON.stringify it yourself when you " +
+        'need structure back); the snippet output is what comes back. ' +
         'Choose per step: if the next action depends on what the previous step returned, stay on single-step tools ' +
         '(snapshot → click/fill → snapshot); reach for run_code when the path can be written in advance — ' +
         'regression flows, batch extraction, or capturing a transient state atomically. ' +

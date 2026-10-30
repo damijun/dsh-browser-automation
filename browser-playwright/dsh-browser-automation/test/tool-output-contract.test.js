@@ -96,14 +96,12 @@ test('run_code records a navigation the snippet performed', async () => {
 test('every wrapping page tool answers with a value its own schema accepts', async () => {
   const runtime = runtimeWith({
     runCode: async () => ({ output: 'hi', title: 'T', url: 'https://a.test/' }),
-    evaluate: async () => ({ answer: 42 }),
     console: async () => 'no messages',
     press: async () => 'Pressed ok',
   });
 
   const cases = [
     ['browser_run_code', { code: 'async page => 1' }, 'runCode'],
-    ['browser_evaluate', { expression: '1 + 1' }, 'evaluate'],
     ['browser_console', {}, 'console'],
     ['browser_press', { key: 'Tab' } , 'press'],
   ];
@@ -118,3 +116,4 @@ test('every wrapping page tool answers with a value its own schema accepts', asy
     assert.equal(value.pageId, PAGE_ID, `${name}: pageId must survive`);
   }
 });
+

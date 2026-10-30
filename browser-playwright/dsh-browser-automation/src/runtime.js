@@ -27,7 +27,7 @@ export const WINDOW_HIDDEN_MESSAGE =
   'Nothing can be captured while the DSH window is minimized or otherwise off screen: Chromium produces no frames ' +
   'for a hidden window, so every capture path times out (the CDP one hangs outright). Restore the window, keep it ' +
   'visible for the duration of a screenshot run, and retry. Everything that does not need pixels still works — ' +
-  'browser_snapshot, browser_evaluate, browser_console and the click/fill/press tools.';
+  'browser_snapshot, browser_run_code, browser_console and the click/fill/press tools.';
 
 export class Runtime {
   /**
@@ -711,17 +711,6 @@ export class Runtime {
         const url = result.reportedUrl ?? target.url;
         this.manager.update(request.pageId, { url, title: result.title ?? target.title });
         return { url, title: result.title ?? target.title };
-      },
-      request.signal,
-    );
-  }
-
-  async evaluate(request) {
-    return this.onPage(
-      request.pageId,
-      async (driver, tab) => {
-        const value = await driver.evaluate(tab, request.expression);
-        return { result: JSON.stringify(value ?? null) };
       },
       request.signal,
     );

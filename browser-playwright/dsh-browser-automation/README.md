@@ -66,8 +66,7 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
 | `browser_goto {pageId, url}` | 让该 tab 进入这个 URL；**先把 tab 切到前台**，用户能看见；标记由 init script 自动续上并复核 |
 | `browser_reload {pageId}` | 重新加载该页 —— 实现为 **`goto` 同一个 URL**，同样先切到前台。**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面（无论当前选中哪个 tab），侧边栏页面全丢 |
-| `browser_evaluate {pageId, expression}` | 求值，结果是 `JSON.stringify`（表达式必须是单表达式或 IIFE） |
-| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它）。历史导航 `page.goBack()` / `page.goForward()` 在这里用，不做单独工具 |
+| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。历史导航 `page.goBack()` / `page.goForward()` 同样在这里用，不做单独工具 |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
 | `browser_status {action}` | `status` / `attach` / `detach` / `panel`；连接出问题先看它，`panel` 打开状态面板 |
 
@@ -138,8 +137,20 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 
 - 边走边看、路径依赖上一步返回值 → `snapshot` + 单步工具；
 - 路径可预先写成代码（回归、批量抓取）、需要原子性抓瞬时状态 → `run_code`；
-- 一次性静态提取 → `browser_evaluate`；
+- 一次性读取（`page.evaluate` / `locator(...)`）→ 也走 `run_code`，**没有单独的 evaluate 工具**；
 - 脚本失败 → 回到 `snapshot` 重新探索，不要盲目重试。
+
+### 为什么只有一个 `run_code`，没有 `evaluate`
+
+`evaluate` 是 `run_code` 的子能力：`return await page.evaluate(() => …)` 与旧的 `playwright-cli eval` 等价，
+而 `run_code` 还能用 locator、键盘、导航、等待。两个工具并存只会让模型多一次「该用哪个」的选择，
+并且两套超时/错误/返回形状要各自维护。所以只保留 `browser_run_code`：
+
+- 读值：`return await page.evaluate(() => document.title)`
+- 读元素：`return await page.locator('a').allTextContents()`
+- 要结构化返回就自己 `JSON.stringify`（返回的是字符串，原样回传）
+
+代价：`run_code` 每次多一次 CLI 调用（跑完补标记），只读操作也一样。
 
 ### 工具结果里没有 tab index
 
@@ -284,7 +295,7 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 | 自己开新页 | `browser_open` | 页面桥（+ CDP） | 报错并给修复动作，**不动任何现有标签页** |
 | 接管用户的页 | `browser_claim` | 页面桥（+ CDP）+ **侧边栏已展开且有可见的浏览器页** | 报错说明是"侧边栏没开"还是"页面还在加载" |
 
-两条都依赖页面桥，但**已经登记的 `pageId` 不受影响**：`snapshot/click/fill/goto/evaluate/run_code/console/screenshot/close/list` 全部只走 CDP，
+两条都依赖页面桥，但**已经登记的 `pageId` 不受影响**：`snapshot/click/fill/goto/run_code/console/screenshot/close/list` 全部只走 CDP，
 桥断了照样能用。`browser_status` 的 `modes: {open, claim}` 直接告诉你当前哪些模式可用。
 
 > 侧边栏收起时页面不会被销毁（DSH 的 `keepMounted`），但它的 carrier 没有盒子尺寸，
@@ -332,7 +343,8 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
   **每次导航后自动补回**标记。
 - **不干扰页面**：position:fixed + z-index:2147483647 + **pointer-events:none**（永远不会吃掉点击），
   内部用 shadow root + ll:initial，页面的 CSS 既改不动它也污染不到页面。
-- **什么时候出现**：rowser_open / rowser_claim 成功之后立即出现；goto、eload 后自动补回。
+- **什么时候出现**：rowser_open / rowser_claim 成功之后立即出现；goto、
+eload 后自动补回。
 - **什么时候消失**：关闭该标签页；或下一次导航后（插件已卸载/停用、注释脚本不再安装）；showSharedBadge: false 则从不出现。
 - 它是**页面内的 DOM 节点**（id="__dsh-ba-shared__"），页面自己的脚本理论上能删掉它 —— 这不影响功能，只是标记会没。
 - **已知替代方案（未实现）**：把标记移到 DSH 界面层（`shell.overlay`，叠在 URL 栏右侧），完全不进截图、也不碰页面 DOM。
@@ -435,7 +447,7 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
   需要重新 `browser_open` / `browser_claim`。
 - **页面自己改标题**后标记会在 ~60ms 内补回；若某个页面在标记补回前被 `tab-list` 读到，会得到
   `PAGE_NOT_FOUND`，重试一次即可。
-- `browser_evaluate` 的表达式被 CLI 包成 `() => (expr)`，**语句列表会语法错误**，要用 IIFE。
+- `browser_run_code` 的 `code` 是**函数体源码**（`async page => { … }`），不是表达式；读值用 `return await page.evaluate(...)`，返回值原样当文本回传。
 - **插件不额外限制 scheme**（只拒 `dsh-app:`），但**平台是有约束的**：DSH 侧边栏浏览器自己的地址解析器只接受 `http`/`https`（含 loopback），
   拒绝 `file:`/`data:`/`blob:`、内嵌凭据和应用同源地址，本地文件归**文档预览**（依据 `dsh-client-ui-sidebar-browser` README 的 Protocol policy）。
   要测本地页面：在该目录起一个 loopback 服务（`python -m http.server 8000`）再打开 `http://127.0.0.1:8000/<file>` —— `browser_open` 失败时会把这句提示带上。
@@ -464,9 +476,9 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
 
 侧栏多大，截图就只能多大：截图截的是侧栏当前的画布，插件**不会**为了一张图去改侧栏或改页面视口。
 
-由此有一条约定写进 rowser_run_code / rowser_screenshot 的工具描述（提示词层面）：
+由此有一条约定写进 browser_run_code / browser_screenshot 的工具描述（提示词层面）：
 
-> 不要在 snippet 里改页面几何：page.setViewportSize() 与 ody 的 zoom 都属于侧栏，由 DSH 决定。
+> 不要在 snippet 里改页面几何：page.setViewportSize() 与 body 的 zoom 都属于侧栏，由 DSH 决定。
 > 页面布局比侧栏宽时，Chromium 会用已有帧**平铺填充**超出部分，产出一张"同一页面左右两份"的图，
 > 所以保持视口不动，截图才是干净的。
 

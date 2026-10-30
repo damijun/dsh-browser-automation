@@ -389,7 +389,7 @@ claim 仍需先从 bridge 获得“用户当前可见的 sidebar page URL”。�
 |---|---|---:|---|
 | `browser_goto` | 当前继续 `resolveTabIndex` + `tab-select` + CLI `goto`；后续可一次 run-code 直接 `targetPage.goto()` | P0 | 最适合未来验证新架构；当前先稳定映射链路 |
 | `browser_reload` | 当前继续使用安全的 CLI `goto` 当前 URL；后续可用目标 Page 执行等价操作 | P0 | 继续避免当前已知的 CLI `reload` 会影响 DSH shell 问题 |
-| `browser_evaluate` | 当前继续 CLI `eval`；后续一次 run-code 找目标 Page 再执行表达式 | P0 | 保持表达式/IIFE 契约和 JSON.stringify 结果 |
+| `browser_evaluate` | **已取消（2026-10-30）**：折叠进 `browser_run_code` —— `page.evaluate` 是它在 Playwright 层的等价物，两个工具并存只增加选择成本 | — | 读值/读元素统一用 `run_code`，见 README §3 |
 | `browser_click` | 当前继续 CLI click；后续一次 run-code 找目标 Page，再执行 locator/ref click | P1 | 需要解决 CLI snapshot ref 与 Playwright locator 的兼容 |
 | `browser_fill` | 当前继续 CLI fill；后续一次 run-code 找目标 Page，再执行 locator/ref fill | P1 | 同 click，需要处理 ref 映射 |
 | `browser_press` | 当前继续 CLI press；后续一次 run-code 找目标 Page，再执行 keyboard press | P1 | 不依赖 snapshot ref，迁移相对简单 |

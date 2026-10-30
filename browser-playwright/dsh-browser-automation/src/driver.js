@@ -315,22 +315,6 @@ export class PageDriver {
   }
 
   /**
-   * Evaluate one JavaScript expression in a resolved tab.
-   *
-   * playwright-cli wraps the argument as `() => (<expr>)`, so callers must pass
-   * an expression or an IIFE — never a statement list.
-   *
-   * @param {ResolvedTab} tab
-   * @param {string} expression
-   */
-  async evaluate(tab, expression) {
-    return this.executeOnResolvedTab(tab, async () => {
-      const { stdout } = await this.cli.run(['--raw', 'eval', expression]);
-      return parseEvalOutput(stdout);
-    });
-  }
-
-  /**
    * Append the page marker, replacing any marker from a previous claim, and keep
    * it attached across the page's own title rewrites.
    *
