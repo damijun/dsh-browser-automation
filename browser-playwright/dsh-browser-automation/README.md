@@ -275,6 +275,8 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 - **什么时候出现**：rowser_open / rowser_claim 成功之后立即出现；goto、eload 后自动补回。
 - **什么时候消失**：关闭该标签页；或下一次导航后（插件已卸载/停用、注释脚本不再安装）；showSharedBadge: false 则从不出现。
 - 它是**页面内的 DOM 节点**（id="__dsh-ba-shared__"），页面自己的脚本理论上能删掉它 —— 这不影响功能，只是标记会没。
+- **已知替代方案（未实现）**：把标记移到 DSH 界面层（`shell.overlay`，叠在 URL 栏右侧），完全不进截图、也不碰页面 DOM。
+  实现规格见 [docs/shared-badge-overlay.md](docs/shared-badge-overlay.md)（含实测锚点、定位启发式、追踪策略、风险与回退）。
 
 ### 6.2 直接改 YAML
 
