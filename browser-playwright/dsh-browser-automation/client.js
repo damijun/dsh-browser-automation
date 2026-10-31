@@ -176,9 +176,10 @@ window.__ModuleLoader__.load({
         'cfg.field.autoAttach': 'Attach at startup',
         'cfg.desc.autoAttach':
           'Attach once when DSH starts, so sidebar pages opened afterwards are visible to the CLI. Costs one daemon process while DSH runs; only one DSH instance at a time.',
-        'cfg.field.showSharedBadge': 'Shared page badge',
+    'chip.shared': 'shared with the agent',
+    'cfg.field.showSharedBadge': 'Shared page badge',
         'cfg.desc.showSharedBadge':
-          'Paint a small "shared with the agent" badge inside every page this plugin controls. It cannot be clicked and is re-applied after navigation.',
+          'Show a small "driven by the agent" badge above the sidebar while the browser tab in view is controlled by this plugin. Nothing is painted into the page, and the badge ignores pointer events.',
       },
       zh: {
         'panel.title': '浏览器自动化',
@@ -251,9 +252,10 @@ window.__ModuleLoader__.load({
         'cfg.field.autoAttach': '开机自动连接',
         'cfg.desc.autoAttach':
           'DSH 启动时先 attach 一次，之后打开的侧边栏页面才能被 CLI 看见。代价是运行期间常驻一个 daemon 进程；同时只能有一个 DSH 实例。',
-        'cfg.field.showSharedBadge': '共享页面标记',
+    'chip.shared': '正在与智能体共享',
+    'cfg.field.showSharedBadge': '共享页面标记',
         'cfg.desc.showSharedBadge':
-          '在插件控制的每个页面里画一个「正在与智能体共享」的小标记：不可点击，页面导航后会自动补回。',
+          '当正在看的浏览器页由本插件控制时，在侧栏上方显示一个「由智能体驱动」的小浮标：不往页面里画任何东西，浮标也不接收点击。',
       },
     };
 
@@ -318,6 +320,208 @@ window.__ModuleLoader__.load({
      *
      * @param {(key: string) => string} t
      */
+    /**
+     * The "driven by the agent" badge, drawn on the frame-wide overlay above the
+     * sidebar, never inside the page.
+     *
+     * The page itself is untouched: the badge appears when the browser tab in view
+     * carries this plugin's pageId token in its document title — that token is the
+     * plugin's join key, and its presence is exactly "this page is shared". The
+     * overlay layer is click-through, and the badge opts out of pointer events too,
+     * so it can never intercept a click meant for the page.
+     *
+     * @param {(key: string) => string} t
+     */
+    function makeSharedBadge(t) {
+      const TOKEN = /\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/;
+      return function SharedBadge() {
+        const h = React.createElement;
+        const [box, setBox] = React.useState(null);
+        const [enabled, setEnabled] = React.useState(true);
+        React.useEffect(() => {
+          let alive = true;
+          call('config', {})
+            .then((config) => {
+              const values = config && config.values ? config.values : config;
+              if (alive && values && values.showSharedBadge === false) setEnabled(false);
+            })
+            .catch(() => {});
+          return () => {
+            alive = false;
+          };
+        }, []);
+        React.useEffect(() => {
+          if (!enabled) {
+            setBox(null);
+            return undefined;
+          }
+          // Tab switches are event driven: the pane that leaves view goes to 0x0 and the
+          // one that enters regains a real box, and a switch to a never-rendered tab
+          // creates the pane — a size observer plus a mutation observer cover both.
+          // Everything else keeps its old behaviour; the slow safety net below catches
+          // anything these observers miss.
+          let disposed = false;
+          let frame = 0;
+          const observed = new Set();
+
+          const measure = () => {
+            frame = 0;
+            if (disposed) return;
+            let found = null;
+            for (const pane of document.querySelectorAll("[data-sidebar-right-tab]")) {
+              const rect = pane.getBoundingClientRect();
+              if (rect.width < 80 || rect.height < 80) continue;
+              const view = pane.querySelector('webview');
+              if (!view) continue;
+              let title = '';
+              try {
+                title = view.getTitle() || '';
+              } catch (error) {
+                title = '';
+              }
+              if (!TOKEN.test(title)) continue;
+              // Anchor to the address field: flush against its right end, which keeps
+              // the "open in system browser" button next to it untouched.
+              const field = pane.querySelector('input');
+              const anchor = field ? field.getBoundingClientRect() : rect;
+              found = { top: anchor.top, height: anchor.height, right: anchor.right };
+              break;
+            }
+            setBox((previous) => {
+              if (found === null) return previous === null ? previous : null;
+              if (
+                previous !== null &&
+                Math.abs(previous.top - found.top) < 1 &&
+                Math.abs(previous.right - found.right) < 1 &&
+                Math.abs(previous.height - found.height) < 1
+              ) {
+                return previous;
+              }
+              return found;
+            });
+          };
+
+          const schedule = () => {
+            if (disposed || frame) return;
+            frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(measure) : setTimeout(measure, 16);
+          };
+
+          // Every pane, so a switch (0x0 <-> real box) reports itself. Re-armed whenever
+          // panes appear or disappear.
+          const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
+          const syncPanes = () => {
+            if (!resize) return;
+            const live = new Set();
+            for (const pane of document.querySelectorAll("[data-sidebar-right-tab]")) {
+              live.add(pane);
+              if (!observed.has(pane)) {
+                resize.observe(pane);
+                observed.add(pane);
+              }
+            }
+            for (const pane of observed) {
+              if (live.has(pane)) continue;
+              try {
+                resize.unobserve(pane);
+              } catch (error) {}
+              observed.delete(pane);
+            }
+          };
+
+          // Only the sidebar subtree matters: the conversation column mutates constantly
+          // while a reply streams, and those records must not wake this up.
+          const mutate = typeof MutationObserver === 'function'
+            ? new MutationObserver((records) => {
+                let relevant = records.length > 200;
+                for (const record of records) {
+                  if (relevant) break;
+                  const target = record.target;
+                  if (target && typeof target.closest === 'function' && target.closest('[data-sidebar-right-session]')) {
+                    relevant = true;
+                    break;
+                  }
+                  for (const node of record.addedNodes || []) {
+                    if (node && node.nodeType === 1 && typeof node.closest === 'function' && node.closest('[data-sidebar-right-session]')) {
+                      relevant = true;
+                      break;
+                    }
+                  }
+                }
+                if (!relevant) return;
+                syncPanes();
+                schedule();
+              })
+            : null;
+
+          syncPanes();
+          measure();
+          if (mutate) mutate.observe(document.body, { childList: true, subtree: true });
+          window.addEventListener('resize', schedule);
+          // Safety net: two seconds, sizes and titles only, in case the observers stop
+          // matching (a future DSH could rename the data attribute).
+          const safety = setInterval(measure, 2000);
+          return () => {
+            disposed = true;
+            clearInterval(safety);
+            window.removeEventListener('resize', schedule);
+            if (mutate) mutate.disconnect();
+            if (resize) {
+              for (const pane of observed) {
+                try {
+                  resize.unobserve(pane);
+                } catch (error) {}
+              }
+              observed.clear();
+            }
+            if (frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+          };
+        }, [enabled]);
+        if (!enabled || box === null) return null;
+        return h(
+          'div',
+          {
+            'data-dsh-ba-shared': '1',
+            role: 'status',
+            'aria-live': 'polite',
+            title: t('chip.shared'),
+            style: {
+              position: 'fixed',
+              // The <webview> paints above the overlay inside the page area, so this
+              // sits in the browser toolbar instead: right end of the address field,
+              // vertically centred, with a small gap before the external-open button.
+              top: box.top + (box.height - 22) / 2,
+              right: window.innerWidth - box.right + 3,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '2px 9px 2px 7px',
+              borderRadius: '999px',
+              border: '1px solid rgba(255,255,255,.28)',
+              background: 'linear-gradient(135deg, #5b9bff 0%, #2f6fed 100%)',
+              color: '#fff',
+              boxShadow: '0 1px 4px rgba(24,64,148,.28)',
+              font: '11px/1.5 system-ui, sans-serif',
+              letterSpacing: '.01em',
+              whiteSpace: 'nowrap',
+              pointerEvents: 'none',
+              zIndex: 1,
+            },
+          },
+          h(
+            'svg',
+            {
+              width: 10,
+              height: 10,
+              viewBox: '0 0 12 12',
+              'aria-hidden': 'true',
+            },
+            h('circle', { cx: 6, cy: 6, r: 4, fill: '#fff', opacity: 0.95 }),
+            h('circle', { cx: 6, cy: 6, r: 1.6, fill: '#2f6fed' }),
+          ),
+          t('chip.shared'),
+        );
+      };
+    }
     function makePanel(t) {
       const h = React.createElement;
       const dash = (value) => (value === null || value === undefined || value === '' ? '—' : String(value));
@@ -1457,6 +1661,19 @@ window.__ModuleLoader__.load({
             disposers.push(
               ctx.slots.register({ name: 'sidebar.right.pane.tab', key: PANEL_ID }, makePanel(t)),
             );
+            // The "shared with the agent" marker lives on the frame-wide overlay, above
+            // the sidebar: the page is never touched, and the chip keeps the official
+            // renderer (which is the only thing that can read the browser store title).
+            try {
+              disposers.push(
+                ctx.slots.register(
+                  { name: 'shell.overlay', id: 'browser-automation:shared', order: 30 },
+                  makeSharedBadge(t),
+                ),
+              );
+            } catch (error) {
+              console.warn(`[dsh-browser-automation] shared badge could not register: ${error.message}`);
+            }
             // A bundle's own configuration is seated on its page in the sidebar's
             // Plugins view (the slot contract says a third-party bundle's config
             // belongs in `plugins.bundle.config`, not `plugins.item`). Nested inject

@@ -359,19 +359,30 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 
 ### 「正在与智能体共享」标记（showSharedBadge，默认开）
 
-被插件接管/打开的页面，右上角会出现一个悬浮标记：绿点 + 「正在与智能体共享」。
+当**正在看的浏览器页**由本插件控制时，**地址栏右端贴壁**显示一个蓝色的 `● 正在与智能体共享` 胶囊（给「在系统浏览器中打开」按钮留出位置）：
+`pointer-events: none`，**不接收任何点击**，也不遮挡地址栏以外的任何控件。
 
-- **为什么画在页面里**：侧边栏每个标签页的标题槽位只对插件自己注册的面板型标签页开放（按 pane id 键控），
-  DSH 自有的浏览器标签页没有对外装饰接口。页面是本插件完全掌管的表面，且注释脚本（init script）会在
-  **每次导航后自动补回**标记。
-- **不干扰页面**：position:fixed + z-index:2147483647 + **pointer-events:none**（永远不会吃掉点击），
-  内部用 shadow root + ll:initial，页面的 CSS 既改不动它也污染不到页面。
-- **什么时候出现**：rowser_open / rowser_claim 成功之后立即出现；goto、
-eload 后自动补回。
-- **什么时候消失**：关闭该标签页；或下一次导航后（插件已卸载/停用、注释脚本不再安装）；showSharedBadge: false 则从不出现。
-- 它是**页面内的 DOM 节点**（id="__dsh-ba-shared__"），页面自己的脚本理论上能删掉它 —— 这不影响功能，只是标记会没。
-- **已知替代方案（未实现）**：把标记移到 DSH 界面层（`shell.overlay`，叠在 URL 栏右侧），完全不进截图、也不碰页面 DOM。
-  实现规格见 [docs/shared-badge-overlay.md](docs/shared-badge-overlay.md)（含实测锚点、定位启发式、追踪策略、风险与回退）。
+- **不碰页面**：标记挂在 DSH 界面层的 `shell.overlay`（`id: browser-automation:shared`，order 30），
+  **页面 DOM 里没有任何节点**——截图截的是页面，所以浮标不会进截图；页面脚本也删不掉它。
+- **判据**：那个可见浏览器 tab 的 `<webview>` 标题里带着本插件的 `[dshpg-…]` token（token 是插件与页面的 join key，
+  出现即表示"这页由本插件掌管"）。没有 token 的页、非浏览器 tab、侧栏收起时都不显示。
+- **为什么不在标签芯片上**（实测结论）：`sidebar.right.pane.tab.title` 是 keyed 插槽，但 key 是**页面类型 id**
+  （`@deepseek-ai/dsh-client-ui-sidebar-browser`），同一 priority 注册会被拒绝、只能换 priority 去 shadow；
+  而官方芯片的标题来自**浏览器类型自己的 store**（插件读不到），`tab.title` 对浏览器页是空的、chip 挂载时
+  `<webview>` 还不存在——替换后芯片会只剩图标、没有标题。
+- **为什么浮标不压在页面区域**：Electron 的 `<webview>` 会盖住同区域的普通 HTML（用克隆体实测：
+  放到工具栏上方可见、放进页面区就看不见），所以浮标锚在**浏览器工具栏**这一行。
+- **几何**：锚定地址输入框的右边缘（`right = 窗口宽 − 输入框右缘 + 6px`，垂直居中），
+  因此它永远贴着地址栏右端、宽度变化不影响布局，也不会盖住右边的「在系统浏览器中打开」按钮。
+- **样式**：蓝色渐变胶囊（`#5b9bff → #2f6fed`）+ 白字 + 白色小圆点 + 浅阴影。
+- **刷新节奏**：只有"切 tab"改成了事件驱动，其余与之前一致。
+  - 切 tab：`ResizeObserver` 观察每个 pane —— 切走时旧 pane 变 0×0、切入时新 pane 恢复实际盒子，两边都会回调；
+    切到"从未渲染过的 tab"时 pane 是新建的，由 `MutationObserver`（只看 `[data-sidebar-right-session]` 子树）
+    捕获并重新挂载观察者；
+  - 拖侧栏/缩放窗口：沿用原来的 `window.resize` 监听；
+  - **安全网**：2 秒一次（只读尺寸与标题），兜住观察者可能漏掉的变化；
+  - 旧实现是 250ms 轮询（实测 0.3ms/s ≈ 0.03% 主线程），现在切 tab 不再靠轮询。
+- **关闭方式**：`showSharedBadge: false`（配置卡片里叫"共享页面标记"）。
 
 ### 6.2 直接改 YAML
 
@@ -381,7 +392,7 @@ eload 后自动补回。
   config:
     session: dsh                 # playwright-cli -s=；所有 DSH 会话共用一个
     cdpPort: 9222                # 见下：必须和启动参数一致
-    showSharedBadge: true        # 页面右上角「正在与智能体共享」标记（见 6.1）
+    showSharedBadge: true        # 地址栏右端的「正在与智能体共享」浮标（见 6.1；不写进页面）
     command: playwright-cli      # 或绝对路径
     nodePath: auto               # 见下：哪个 node 去跑 CLI 的 .js 入口
     timeoutMs: 20000             # 单次 CLI 调用超时；超时重试一次然后报错

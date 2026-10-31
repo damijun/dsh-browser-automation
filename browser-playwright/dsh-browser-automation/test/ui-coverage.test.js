@@ -62,3 +62,24 @@ test('both a save and a reset report that a re-enable is needed, briefly', () =>
   assert.match(source, /cfg\.reset': '[^']*Restart DSH/);
 });
 
+
+test('the shared badge is an overlay registration, not a page patch', async () => {
+  // The badge must live on the frame-wide overlay layer: the page is never modified, and
+  // the marker cannot be painted into a screenshot.
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8');
+  assert.match(source, /name: 'shell\.overlay', id: 'browser-automation:shared'/);
+  assert.match(source, /data-dsh-ba-shared/);
+  assert.match(source, /pointerEvents: 'none'/);
+});
+
+test('the shared badge follows tab switches by event, with only a slow safety tick', async () => {
+  // A 250ms poll cost ~0.3ms/s of layout work; switches are observable through the pane
+  // size (0x0 <-> real box) and through the sidebar's DOM churn, so the badge uses those.
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8');
+  assert.match(source, /new ResizeObserver\(schedule\)/);
+  assert.match(source, /new MutationObserver\(/);
+  assert.match(source, /data-sidebar-right-session/, 'the mutation filter must stay scoped');
+  assert.match(source, /setInterval\(measure, 2000\)/, 'the safety net must stay slow');
+  assert.doesNotMatch(source, /setInterval\(tick, 250\)/, 'the old poll must be gone');
+});
+

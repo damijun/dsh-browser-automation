@@ -124,7 +124,9 @@ export class Runtime {
       log: this.log,
     });
     this.driver = new PageDriver(this.cli, {
-      marker: { badge: this.config.showSharedBadge !== false },
+      // Never paint into the page: the visual marker is the overlay badge the client half
+      // draws above the sidebar (shell.overlay), the title token stays as the join key.
+      marker: { badge: false },
       cdpUrl: String(this.config.cdpUrl ?? 'http://127.0.0.1:9222'),
       attachTimeoutMs: Number(this.config.attachTimeoutMs ?? 60_000),
       screenshotTimeoutMs: Number(this.config.screenshotTimeoutMs ?? 25_000),

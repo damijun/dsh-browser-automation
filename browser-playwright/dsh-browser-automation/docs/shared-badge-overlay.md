@@ -1,8 +1,16 @@
 # 开发文档 · 把「正在与智能体共享」标记移到 DSH 界面层（`shell.overlay`）
 
-> 状态：**未实现**（本文是可执行规格，供以后动工时照做）
-> 影响面：`client.js`（新组件 + 锚定逻辑）、`index.js`/`src/bridge.js`（下发 shared 列表）、`src/config.js`（模式枚举）、`test/`
-> 预估：2–3 小时（含真机验证）；风险主要集中在"URL 栏 DOM 定位"，不在渲染本身
+> 状态：**已实现（2026-11-01）**。页面里不再有任何标记节点；浮标挂在 `shell.overlay`
+> （`id: browser-automation:shared`，order 30），由 `showSharedBadge` 控制。
+>
+> 与下面原始规格的三处偏差（均为实测结论，规格保留作背景）：
+> 1. **不压在页面区域**：Electron 的 `<webview>` 会盖住同区域的普通 HTML（克隆体实测：
+>    工具栏上方可见、页面区不可见），所以浮标锚在**侧栏头部**（标签条右侧、布局按钮左边），
+>    不跟随 URL 栏内部定位；
+> 2. **判据不用"shared 列表下发"**：可见 tab 的 `<webview>` 标题里带 `[dshpg-…]` token 即视为共享，
+>    插件已有这条 join key，无需新增 bridge 通道；
+> 3. **刷新用 500ms 轮询 + resize**，没有订阅 `browserMounted`/`tabDomain`（插件拿不到浏览器类型的 store）；
+>    代价是切 tab 后最多 0.5s 才跟随，换来的是一致且零耦合的实现。
 
 ---
 
