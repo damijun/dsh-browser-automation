@@ -5,30 +5,27 @@ import { Runtime } from '../src/runtime.js';
 import { sessionTag } from '../src/page-id.js';
 
 /**
- * `browser_open` from a conversation that is not on screen.
+ * Host-side behaviour of a background open (`browser_open` from a conversation that is
+ * not on screen): the tab is created by the page half through `openTabIn`, the host still
+ * has to find it in playwright-cli's tab list, and a tab that never becomes a CLI target
+ * must be rolled back instead of left behind.
  *
- * `ctx.sidebarRight.openTab` only writes to the mounted conversation, so a background
- * conversation goes through the per-session `openTabIn`, which fails *silently* when the
- * conversation's sidebar has never rendered. The host therefore (a) passes the calling
- * session down, (b) reports `background` so the model knows the page is invisible and
- * cannot be screenshotted, and (c) turns "no tab appeared" into an explanation instead of
- * a generic load failure.
+ * The page half's own preconditions (the conversation's sidebar is mounted, a webview was
+ * created) live in `client.js` and are exercised live; here we pin the host contract.
  */
 
 const SESSION = 'session-f5af60ee-1220-4ae4-86c3-cd000571ad26';
 const APP_TAB = { index: 0, current: false, title: 'App', url: 'dsh-app://app/', text: '- 0: [App](dsh-app://app/)' };
 
-function runtimeWith({ opened, tabsAfter, command }) {
+function runtimeWith({ opened, tabsAfter = [], calls }) {
   const runtime = new Runtime({ config: { timeoutMs: 5_000 } });
   runtime.cli = { workdir: () => '.', run: async () => ({ stdout: '""', stderr: '', code: 0 }) };
   runtime.bridge = {
     hasClient: () => true,
     clientState: () => 'live',
     request: async (kind, payload) => {
-      if (kind === 'open-tab') {
-        command.push(payload);
-        return opened;
-      }
+      calls.push({ kind, payload });
+      if (kind === 'open-tab') return opened;
       return {};
     },
   };
@@ -43,61 +40,62 @@ function runtimeWith({ opened, tabsAfter, command }) {
 }
 
 test('a background open reports itself as background', async () => {
-  const command = [];
+  const calls = [];
   const runtime = runtimeWith({
-    opened: { tabId: null, background: true, url: 'https://a.test/' },
+    opened: { tabId: 'tab9', background: true, url: 'https://a.test/' },
     tabsAfter: [
       { index: 1, current: false, title: 'Opened', url: 'https://a.test/', text: '- 1: [Opened](https://a.test/)' },
     ],
-    command,
+    calls,
   });
 
   const value = await runtime.openPage({ sessionId: SESSION, url: 'https://a.test/' });
   assert.equal(value.background, true);
-  // The handle carries the calling session's tag, so ownership can be checked later.
   assert.equal(value.pageId.split('-')[1], sessionTag(SESSION));
-  // The calling session has to travel with the command: the page half decides between
-  // openTab and openTabIn from it.
-  assert.deepEqual(command, [{ url: 'https://a.test/', sessionId: SESSION }]);
+  assert.deepEqual(calls[0], { kind: 'open-tab', payload: { url: 'https://a.test/', sessionId: SESSION } });
   assert.equal(runtime.manager.get(value.pageId).sessionId, SESSION);
 });
 
 test('a foreground open stays background: false', async () => {
-  const command = [];
   const runtime = runtimeWith({
     opened: { tabId: 'tab7', background: false, url: 'https://a.test/' },
     tabsAfter: [
       { index: 1, current: false, title: 'Opened', url: 'https://a.test/', text: '- 1: [Opened](https://a.test/)' },
     ],
-    command,
+    calls: [],
   });
   const value = await runtime.openPage({ sessionId: SESSION, url: 'https://a.test/' });
   assert.equal(value.background, false);
 });
 
-test('a tab that never appears in a background open explains why', async () => {
+test('a background tab that never becomes a CLI target is rolled back', async () => {
+  const calls = [];
   const runtime = runtimeWith({
-    opened: { tabId: null, background: true, url: 'https://a.test/' },
+    opened: { tabId: 'tab9', background: true, url: 'https://a.test/' },
     tabsAfter: [],
-    command: [],
+    calls,
   });
-  await assert.rejects(() => runtime.openPage({ sessionId: SESSION, url: 'https://a.test/', waitMs: 200 }), (error) => {
-    assert.match(error.message, /not on screen/);
-    assert.match(error.message, /Switch to that conversation/);
+
+  await assert.rejects(() => runtime.openPage({ sessionId: SESSION, url: 'https://a.test/', waitMs: 150 }), (error) => {
+    assert.match(error.message, /never started loading/);
+    assert.match(error.message, /the tab was closed again/);
     return true;
   });
+  const close = calls.find((call) => call.kind === 'close-tab');
+  assert.deepEqual(close, { kind: 'close-tab', payload: { sessionId: SESSION, tabId: 'tab9' } });
 });
 
-test('a tab that never appears in a foreground open keeps the load-failure advice', async () => {
+test('a failed foreground open leaves the sidebar alone', async () => {
+  const calls = [];
   const runtime = runtimeWith({
     opened: { tabId: 'tab7', background: false, url: 'https://a.test/' },
     tabsAfter: [],
-    command: [],
+    calls,
   });
-  await assert.rejects(() => runtime.openPage({ sessionId: SESSION, url: 'https://a.test/', waitMs: 200 }), (error) => {
+
+  await assert.rejects(() => runtime.openPage({ sessionId: SESSION, url: 'https://a.test/', waitMs: 150 }), (error) => {
     assert.match(error.message, /may have failed to load/);
-    assert.match(error.message, /browser_list/);
     return true;
   });
+  assert.equal(calls.some((call) => call.kind === 'close-tab'), false);
 });
-

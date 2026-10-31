@@ -199,11 +199,18 @@ export class Runtime {
       const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
       const found = await this.waitForNewTab(before, url, request.waitMs ?? 15_000);
       if (!found) {
+        // A background tab that never became a CLI target must not be left behind: the
+        // page half already saw its webview, so close it again before reporting.
+        let rolledBack = false;
+        if (background && opened?.tabId) {
+          rolledBack = await this.requestSidebarClose(request.sessionId, opened.tabId);
+        }
         throw new Error(
           `A sidebar tab was opened for ${url}, but it never appeared in playwright-cli's tab list. ` +
             (background
-              ? 'It was opened in a conversation that is not on screen, so its page has no visible surface and may ' +
-                'not have loaded. Switch to that conversation and retry.'
+              ? 'It was opened in a conversation that is not on screen, and its page never started loading' +
+                (rolledBack ? ' (the tab was closed again)' : '') +
+                '. Switch to that conversation and retry.'
               : 'The page may have failed to load (or the sidebar is showing an error). ' +
                 'Check the sidebar, then use browser_list to see what is reachable.') +
             localFileHint(url),
@@ -248,6 +255,26 @@ export class Runtime {
           'This tool opens tabs only through the DSH page; it will not take over an arbitrary existing tab. ' +
           'Check the DSH sidebar and the bridge state (browser_status), then retry.',
       );
+    }
+  }
+
+  /**
+   * Close a tab that lives in another conversation — the rollback for a background open
+   * that never produced a page. Best effort: a failure to close must not mask the
+   * original error.
+   *
+   * @param {string} sessionId
+   * @param {string} tabId
+   * @returns {Promise<boolean>}
+   */
+  async requestSidebarClose(sessionId, tabId) {
+    try {
+      await this.bridge.request('close-tab', { sessionId, tabId }, { timeoutMs: 8_000 });
+      this.log(`closed background tab ${tabId} in ${sessionId}`);
+      return true;
+    } catch (error) {
+      this.log(`could not close background tab ${tabId}: ${error.message}`);
+      return false;
     }
   }
 

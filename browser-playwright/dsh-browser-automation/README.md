@@ -506,15 +506,24 @@ DSH 的侧栏是"每个会话一份"，但**只有当前显示的那个会话有
 | `browser_open` | 走 `ctx.sidebarRight.openTab` | 走内部的 `openTabIn(sessionId, …)`，见下 |
 | `browser_claim` | ✅（接管眼前那页） | ❌ 拒绝（`PAGE_FOREIGN_SESSION`） |
 
-**后台开页的前提**：`openTabIn` 只对"在本窗口渲染过侧栏"的会话生效——也就是**你在这个会话里说过话**（你切走之后它仍然有效，adopt 只在会话被移除时撤销）。它失败时是**静默 no-op**，所以插件做了两层校验：`tabsIn` 前后差 + `waitForNewTab`（tab-list 里是否出现该 URL）。两层都没过就报明确错误：
+**后台开页**（`openTabIn`）依赖一件确定的运行时事实：**该会话的侧栏是否挂载**。
 
-> the conversation <id> has no sidebar surface in this window yet (it has not been shown since DSH started), so a page cannot be created in it. Open that conversation once, then retry.
+| 该会话侧栏 | 结果 |
+|---|---|
+| **已挂载**（可见，或只是被隐藏 `display:none`） | ✅ tab 写进 store，**webview 会被创建**，页面真的加载（实测：隐藏会话里的 B 站页面一直是活的 CDP target） |
+| **已卸载**（keep-alive 淘汰） | ⚠️ tab 只写进 store，**没有 webview**；页面要等 seat 重新挂载才加载（实测约 2 分钟，时机不受插件控制）→ 不可用 |
 
-**真正会失败的场景**：应用重启后自动恢复/排队的后台回合、以及从不显示的 subagent 会话——它们在本窗口里没有 surface。这类情况下页面必须由前台会话创建，或者你先切过去一次。
+所以插件按下面的顺序判定，**不靠等**：
+
+1. **前置检查**：DOM 里有 `[data-sidebar-right-session="<sessionId>"]` 吗？没有 → 直接拒绝：
+   *该会话的侧栏当前没挂载（被淘汰了），切过去一次再重试——之后它会保持挂载*；
+2. **成功判据**：`openTabIn` 之后 6 秒内，`tabsIn` 多出一个 tab **且**该子树里出现新的 `<webview>`
+   （webview 才是"页面真的在加载"的证据，比 tab-list 更早）；
+3. **失败回滚**：没等到 webview → 用 `closeIn(sessionId, tabId)` 把 tab 删掉再报错（**绝不留脏 tab**）；
+   宿主的 `waitForNewTab` 若仍失败，也会通过 `close-tab` 命令回滚一次。
 
 `browser_open` 的结果带 `background: true` 并在正文里说明："这个会话不在屏幕上，tab 建在后台：不聚焦、不能截图，其它工具照常可用。"
 
----
 ---
 
 ## 8. 自测

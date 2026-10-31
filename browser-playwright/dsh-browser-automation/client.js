@@ -976,42 +976,69 @@ window.__ModuleLoader__.load({
         if (!service) throw new Error('the sidebar-right client service is not available in this page');
 
         // A conversation that is not the one on screen gets its tab through the
-        // per-session entry point (`openTabIn`, not on `ISidebarRight`). It only works
-        // once that conversation's seat has rendered — which is exactly what happened
-        // when the user was in it to give the instruction — and it fails *silently*
-        // otherwise, so the tab count is compared before and after.
-        const mounted = typeof service.mounted?.getSnapshot === 'function' ? service.mounted.getSnapshot() : null;
-        const background = typeof sessionId === 'string' && sessionId !== '' && mounted !== sessionId;
+        // per-session entry point (`openTabIn`, not on `ISidebarRight`). Two facts decide
+        // whether that can work:
+        //   - the conversation's sidebar must be MOUNTED (visible or hidden). Its store
+        //     is what `openTabIn` writes to, and a mounted seat is what creates the
+        //     webview; an evicted seat commits the tab but creates no webview, so the
+        //     page silently fails to load (measured: it appeared ~2 minutes later, when
+        //     the seat was re-mounted, long after any tool call);
+        //   - `openTabIn` reports nothing, so the tab is identified by a `tabsIn` delta
+        //     and the webview count is the proof that a page is actually being created.
+        const mounted = typeof service.mounted?.getSnapshot === "function" ? service.mounted.getSnapshot() : null;
+        const background = typeof sessionId === "string" && sessionId !== "" && mounted !== sessionId;
         if (background) {
-          if (typeof service.openTabIn !== 'function') {
+          if (typeof service.openTabIn !== "function") {
             throw new Error(
-              'this DSH build does not let a plugin open a tab for a conversation that is not on screen ' +
-                '(ctx.sidebarRight has no openTabIn)',
+              "this DSH build does not let a plugin open a tab for a conversation that is not on screen " +
+                "(ctx.sidebarRight has no openTabIn)",
             );
           }
-          const count = () => {
+          const surfaceOf = () => document.querySelector(`[data-sidebar-right-session="${sessionId}"]`);
+          if (!surfaceOf()) {
+            throw new Error(
+              `PAGE_FOREIGN_SESSION: the sidebar of conversation ${sessionId} is not mounted in this window ` +
+                "(it was evicted), so a tab created there would never load. Switch to that conversation once " +
+                "— its sidebar stays mounted afterwards — and retry, or open the page from the conversation " +
+                "that is on screen.",
+            );
+          }
+          const tabIds = () => {
             try {
-              return typeof service.tabsIn === 'function' ? service.tabsIn(sessionId).length : null;
+              return [...service.tabsIn(sessionId)].map((tab) => tab.tabId ?? tab.id);
             } catch (error) {
               return null;
             }
           };
-          const beforeCount = count();
-          service.openTabIn(sessionId, 'browser', { params: { url } });
-          await sleep(350);
-          const afterCount = count();
-          if (beforeCount !== null && afterCount !== null && afterCount <= beforeCount) {
+          const viewCount = () => (surfaceOf() ? surfaceOf().querySelectorAll("webview").length : 0);
+          const idsBefore = tabIds();
+          const viewsBefore = viewCount();
+          service.openTabIn(sessionId, "browser", { params: { url } });
+          let added = [];
+          let loaded = false;
+          const deadline = Date.now() + 6_000;
+          for (;;) {
+            await sleep(250);
+            const idsAfter = tabIds();
+            if (idsBefore !== null && idsAfter !== null) added = idsAfter.filter((id) => !idsBefore.includes(id));
+            loaded = viewCount() > viewsBefore;
+            if ((added.length > 0 && loaded) || Date.now() >= deadline) break;
+          }
+          if (added.length === 0 || !loaded) {
+            // Roll back instead of leaving a tab that can never load.
+            for (const doomed of added) {
+              try {
+                if (typeof service.closeIn === "function") service.closeIn(sessionId, doomed);
+              } catch (error) {}
+            }
             throw new Error(
-              `the conversation ${sessionId} has no sidebar surface in this window yet (it has not been shown since ` +
-                'DSH started), so a page cannot be created in it. Open that conversation once, then retry.',
+              `PAGE_FOREIGN_SESSION: a tab for conversation ${sessionId} could not be started (its sidebar is ` +
+                "mounted but produced no webview). Nothing was left behind. Open the page from the conversation " +
+                "that is on screen, or switch to this one and retry.",
             );
           }
-          return { tabId: null, sessionId, address: null, url, background: true, identified: afterCount !== beforeCount };
+          return { tabId: added[0], sessionId, address: null, url, background: true, identified: true };
         }
-
-        // Capture the tab set BEFORE opening: `openTabs` is a published snapshot
-        // store that catches up a beat later, so it cannot be asked "what did you
-        // just add" synchronously.
         const before = new Set(service.openTabs.getSnapshot().map((tab) => tab.tabId));
 
         const deadline = Date.now() + 10_000;
@@ -1180,6 +1207,16 @@ window.__ModuleLoader__.load({
         if (command.kind === 'open-tab') {
           const value = await openTab(command.url, command.sessionId);
           await call('result', { requestId: command.requestId, ok: true, value });
+          return;
+        }
+        if (command.kind === 'close-tab') {
+          // Rollback for a background open that never produced a page.
+          const service = sidebar();
+          if (!service || typeof service.closeIn !== "function") {
+            throw new Error('this DSH build cannot close a tab in another conversation');
+          }
+          service.closeIn(String(command.sessionId ?? ''), String(command.tabId ?? ''));
+          await call('result', { requestId: command.requestId, ok: true, value: { closed: true } });
           return;
         }
         if (command.kind === 'ping') {
