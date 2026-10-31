@@ -976,15 +976,15 @@ window.__ModuleLoader__.load({
         if (!service) throw new Error('the sidebar-right client service is not available in this page');
 
         // A conversation that is not the one on screen gets its tab through the
-        // per-session entry point (`openTabIn`, not on `ISidebarRight`). Two facts decide
-        // whether that can work:
-        //   - the conversation's sidebar must be MOUNTED (visible or hidden). Its store
-        //     is what `openTabIn` writes to, and a mounted seat is what creates the
-        //     webview; an evicted seat commits the tab but creates no webview, so the
-        //     page silently fails to load (measured: it appeared ~2 minutes later, when
-        //     the seat was re-mounted, long after any tool call);
-        //   - `openTabIn` reports nothing, so the tab is identified by a `tabsIn` delta
-        //     and the webview count is the proof that a page is actually being created.
+        // per-session entry point (`openTabIn`, not on `ISidebarRight`). That only works
+        // while the conversation's sidebar is MOUNTED: an evicted seat commits the tab to
+        // the store but never creates the webview, so the page does not load (measured:
+        // it appeared ~2 minutes later, when a store change re-mounted the seat).
+        //
+        // So when the seat is missing, the plugin briefly selects that conversation
+        // (uiWorkspace.openSession), waits for its sidebar, opens the tab, and switches
+        // straight back. The user sees a short flash; that is the accepted price of a
+        // deterministic background open.
         const mounted = typeof service.mounted?.getSnapshot === "function" ? service.mounted.getSnapshot() : null;
         const background = typeof sessionId === "string" && sessionId !== "" && mounted !== sessionId;
         if (background) {
@@ -995,49 +995,81 @@ window.__ModuleLoader__.load({
             );
           }
           const surfaceOf = () => document.querySelector(`[data-sidebar-right-session="${sessionId}"]`);
-          if (!surfaceOf()) {
-            throw new Error(
-              `PAGE_FOREIGN_SESSION: the sidebar of conversation ${sessionId} is not mounted in this window ` +
-                "(it was evicted), so a tab created there would never load. Switch to that conversation once " +
-                "— its sidebar stays mounted afterwards — and retry, or open the page from the conversation " +
-                "that is on screen.",
-            );
-          }
-          const tabIds = () => {
+          // Mounted is not enough: a hidden seat keeps its old webviews but creates no new
+          // one, so the tab would be committed and never loaded. The seat must be laid out.
+          const visible = () =>
+            [...document.querySelectorAll(`[data-sidebar-right-session="${sessionId}"]`)].some((element) => {
+              const rect = element.getBoundingClientRect();
+              return rect.width > 0 && rect.height > 0;
+            });
+          const workspace = (() => {
             try {
-              return [...service.tabsIn(sessionId)].map((tab) => tab.tabId ?? tab.id);
+              return typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
             } catch (error) {
               return null;
             }
+          })();
+          const canSwitch = Boolean(workspace && typeof workspace.openSession === "function" && mounted);
+          let switched = false;
+          const switchBack = () => {
+            if (!switched) return;
+            switched = false;
+            try {
+              workspace.openSession(mounted);
+            } catch (error) {}
           };
-          const viewCount = () => (surfaceOf() ? surfaceOf().querySelectorAll("webview").length : 0);
-          const idsBefore = tabIds();
-          const viewsBefore = viewCount();
-          service.openTabIn(sessionId, "browser", { params: { url } });
-          let added = [];
-          let loaded = false;
-          const deadline = Date.now() + 6_000;
-          for (;;) {
-            await sleep(250);
-            const idsAfter = tabIds();
-            if (idsBefore !== null && idsAfter !== null) added = idsAfter.filter((id) => !idsBefore.includes(id));
-            loaded = viewCount() > viewsBefore;
-            if ((added.length > 0 && loaded) || Date.now() >= deadline) break;
-          }
-          if (added.length === 0 || !loaded) {
-            // Roll back instead of leaving a tab that can never load.
-            for (const doomed of added) {
-              try {
-                if (typeof service.closeIn === "function") service.closeIn(sessionId, doomed);
-              } catch (error) {}
+          try {
+            if (!visible() && canSwitch) {
+              switched = true;
+              workspace.openSession(sessionId);
+              const until = Date.now() + 3_000;
+              while (!visible() && Date.now() < until) await sleep(100);
             }
-            throw new Error(
-              `PAGE_FOREIGN_SESSION: a tab for conversation ${sessionId} could not be started (its sidebar is ` +
-                "mounted but produced no webview). Nothing was left behind. Open the page from the conversation " +
-                "that is on screen, or switch to this one and retry.",
-            );
+            if (!visible()) {
+              throw new Error(
+                `PAGE_FOREIGN_SESSION: the sidebar of conversation ${sessionId} is not on screen and could not be ` +
+                  "brought up, so a tab created there would never load. Open the page from the conversation that " +
+                  "is on screen instead.",
+              );
+            }
+          const tabIds = () => {
+              try {
+                return [...service.tabsIn(sessionId)].map((tab) => tab.tabId ?? tab.id);
+              } catch (error) {
+                return null;
+              }
+            };
+            const viewCount = () => (surfaceOf() ? surfaceOf().querySelectorAll("webview").length : 0);
+            const idsBefore = tabIds();
+            const viewsBefore = viewCount();
+            service.openTabIn(sessionId, "browser", { params: { url } });
+            let added = [];
+            let loaded = false;
+            const deadline = Date.now() + 6_000;
+            for (;;) {
+              await sleep(250);
+              const idsAfter = tabIds();
+              if (idsBefore !== null && idsAfter !== null) added = idsAfter.filter((id) => !idsBefore.includes(id));
+              loaded = viewCount() > viewsBefore;
+              if ((added.length > 0 && loaded) || Date.now() >= deadline) break;
+            }
+            if (added.length === 0 || !loaded) {
+              // Roll back instead of leaving a tab that can never load.
+              for (const doomed of added) {
+                try {
+                  if (typeof service.closeIn === "function") service.closeIn(sessionId, doomed);
+                } catch (error) {}
+              }
+              throw new Error(
+                `PAGE_FOREIGN_SESSION: a tab for conversation ${sessionId} could not be started (no webview was ` +
+                  "created). Nothing was left behind. Open the page from the conversation that is on screen, or " +
+                  "switch to this one and retry.",
+              );
+            }
+            return { tabId: added[0], sessionId, address: null, url, background: true, identified: true, flashed: switched };
+          } finally {
+            switchBack();
           }
-          return { tabId: added[0], sessionId, address: null, url, background: true, identified: true };
         }
         const before = new Set(service.openTabs.getSnapshot().map((tab) => tab.tabId));
 
@@ -1181,27 +1213,106 @@ window.__ModuleLoader__.load({
        *
        * @param {string} pageId
        */
-      function closePage(pageId) {
+      async function closePage(pageId, sessionId) {
         const service = sidebar();
         if (!service || typeof service.close !== 'function') {
           return { closed: false, tabId: null, reason: 'the sidebar-right client service cannot close tabs' };
         }
-        const tabId = tabIdFor(pageId);
+        // Look only inside the owning conversation: tab ids repeat per conversation, so a
+        // document-wide chip search could close a same-numbered tab in the conversation
+        // that happens to be on screen.
+        const rootFor = (owner) =>
+          typeof owner === "string" && owner !== ""
+            ? document.querySelector(`[data-sidebar-right-session="${owner}"]`)
+            : document;
+        const root = rootFor(sessionId);
+        if (!root) {
+          return {
+            closed: false,
+            tabId: null,
+            reason: `the sidebar of conversation ${sessionId} is not mounted, so its tab cannot be closed from here`,
+          };
+        }
+        const chipFor = (owner) => {
+          const scope = rootFor(owner);
+          if (!scope) return null;
+          return (
+            [...scope.querySelectorAll("[data-sidebar-right-tab]")].find((element) =>
+              (element.textContent || "").includes(pageId),
+            ) ?? null
+          );
+        };
+        const chip = chipFor(sessionId);
+        const tabId = chip ? chip.getAttribute("data-sidebar-right-tab") : null;
         if (!tabId) {
           return {
             closed: false,
             tabId: null,
-            reason: 'no sidebar tab chip carries this page (the tab may already be gone, or its title lost the marker)',
+            reason: "no sidebar tab chip carries this page (the tab may already be gone, or its title lost the marker)",
           };
         }
+        const mounted = typeof service.mounted?.getSnapshot === "function" ? service.mounted.getSnapshot() : null;
+        const owner = typeof sessionId === "string" && sessionId !== "" ? sessionId : mounted;
+        const workspace = (() => {
+          try {
+            return typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
+          } catch (error) {
+            return null;
+          }
+        })();
+        const canSwitch = Boolean(workspace && typeof workspace.openSession === "function" && mounted);
+        const visible = (who) =>
+          [...document.querySelectorAll(`[data-sidebar-right-session="${who}"]`)].some((element) => {
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          });
+        let switched = false;
         try {
+          if (owner && mounted && owner !== mounted) {
+            if (!canSwitch) {
+              return {
+                closed: false,
+                tabId,
+                reason:
+                  `conversation ${owner} is not on screen and this DSH build cannot select it, so its tab ` +
+                  "cannot be closed from here. Close it in that conversation.",
+              };
+            }
+            // `closeIn` is silent for a conversation without an adopted store, and
+            // `close` addresses the on-screen strip — so select the owner, close its tab
+            // normally, and switch back.
+            switched = true;
+            workspace.openSession(owner);
+            const until = Date.now() + 3_000;
+            while (!visible(owner) && Date.now() < until) await sleep(100);
+          }
           service.close(tabId);
         } catch (error) {
           return { closed: false, tabId, reason: error && error.message ? error.message : String(error) };
+        } finally {
+          if (switched) {
+            try {
+              workspace.openSession(mounted);
+            } catch (error) {}
+          }
+        }
+        // The chip is what the user sees: if it survived, the close did not happen.
+        // Only meaningful with a known owner: without a session the chip lookup covers the
+        // whole document and cannot tell which strip it came from.
+        if (typeof sessionId !== "string" || sessionId === "") return { closed: true, tabId };
+        const until = Date.now() + 2_000;
+        while (chipFor(owner) && Date.now() < until) await sleep(150);
+        if (chipFor(owner)) {
+          return {
+            closed: false,
+            tabId,
+            reason:
+              `the sidebar still shows tab ${tabId} of conversation ${owner} after closing it, so the tab was ` +
+              "not removed. Try again from that conversation.",
+          };
         }
         return { closed: true, tabId };
       }
-
       /** @param {{ requestId: string, kind: string, url?: string, pageId?: string }} command */
       async function handle(command) {
         if (command.kind === 'open-tab') {
@@ -1229,7 +1340,7 @@ window.__ModuleLoader__.load({
           return;
         }
         if (command.kind === 'close-page') {
-          const value = closePage(String(command.pageId ?? ''));
+          const value = await closePage(String(command.pageId ?? ''), String(command.sessionId ?? ''));
           await call('result', { requestId: command.requestId, ok: true, value });
           return;
         }

@@ -82,6 +82,10 @@ export function createTools(runtime) {
               'True when the tab was created in a conversation that is not on screen: the page has no visible ' +
                 'surface, so it will not be focused and cannot be screenshotted.',
             ),
+            flashed: boolean(
+              'True when the plugin had to select this conversation for a moment to mount its sidebar (the window ' +
+                'briefly switched and switched back).',
+            ),
           },
           required: ['pageId', 'url'],
         },
@@ -91,7 +95,10 @@ export function createTools(runtime) {
             (value.title ? `\ntitle: ${value.title}` : '') +
             (value.background
               ? '\nbackground: this conversation is not the one on screen, so the tab was created in the background — ' +
-                'it is not focused and cannot be screenshotted; every other tool works on it.'
+                'it is not focused and cannot be screenshotted; every other tool works on it.' +
+                (value.flashed
+                  ? ' The window briefly switched to this conversation to mount its sidebar, then switched back.'
+                  : '')
               : ''),
         ),
       },
@@ -231,7 +238,7 @@ export function createTools(runtime) {
       },
       async execute(args, exec) {
         const sessionId = requireSession(exec);
-        return sanitize(await runtime.closePage({ pageId: args.pageId, signal: exec.signal }));
+        return sanitize(await runtime.closePage({ pageId: args.pageId, sessionId, signal: exec.signal }));
       },
     },
 

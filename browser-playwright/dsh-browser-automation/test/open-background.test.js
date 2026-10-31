@@ -51,6 +51,7 @@ test('a background open reports itself as background', async () => {
 
   const value = await runtime.openPage({ sessionId: SESSION, url: 'https://a.test/' });
   assert.equal(value.background, true);
+  assert.equal(value.flashed, false);
   assert.equal(value.pageId.split('-')[1], sessionTag(SESSION));
   assert.deepEqual(calls[0], { kind: 'open-tab', payload: { url: 'https://a.test/', sessionId: SESSION } });
   assert.equal(runtime.manager.get(value.pageId).sessionId, SESSION);
@@ -98,4 +99,16 @@ test('a failed foreground open leaves the sidebar alone', async () => {
     return true;
   });
   assert.equal(calls.some((call) => call.kind === 'close-tab'), false);
+});
+
+test('a mount that needed a session flash is reported', async () => {
+  const runtime = runtimeWith({
+    opened: { tabId: 'tab9', background: true, flashed: true, url: 'https://a.test/' },
+    tabsAfter: [
+      { index: 1, current: false, title: 'Opened', url: 'https://a.test/', text: '- 1: [Opened](https://a.test/)' },
+    ],
+    calls: [],
+  });
+  const value = await runtime.openPage({ sessionId: SESSION, url: 'https://a.test/' });
+  assert.equal(value.flashed, true);
 });

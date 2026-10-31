@@ -77,3 +77,22 @@ test('an invalid page handle is rejected before any work', async () => {
   await assert.rejects(() => runtime.closePage({ pageId: 'nope' }), /is not a page handle/);
   assert.deepEqual(cliCalls, []);
 });
+
+test('the close request carries the owning conversation', async () => {
+  // Tab ids are per conversation, so the page half must not search the whole document:
+  // the caller's session narrows the chip lookup and lets a foreign strip close through
+  // closeIn instead of closing a same-numbered tab in the conversation on screen.
+  const calls = [];
+  const { runtime } = harness({
+    bridge: {
+      clientState: () => 'live',
+      hasClient: () => true,
+      request: async (kind, payload) => {
+        calls.push({ kind, payload });
+        return { closed: true, tabId: 'tab7' };
+      },
+    },
+  });
+  await runtime.closePage({ pageId: PAGE_ID, sessionId: 's1' });
+  assert.deepEqual(calls[0], { kind: 'close-page', payload: { pageId: PAGE_ID, sessionId: 's1' } });
+});

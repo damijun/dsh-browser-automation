@@ -196,6 +196,7 @@ export class Runtime {
     return this.withOpenLock(async () => {
       const opened = await this.requestSidebarOpen(url, request.sessionId);
       const background = opened?.background === true;
+      const flashed = opened?.flashed === true;
       const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
       const found = await this.waitForNewTab(before, url, request.waitMs ?? 15_000);
       if (!found) {
@@ -234,6 +235,7 @@ export class Runtime {
         url: marked.url || found.url,
         title: marked.title,
         background,
+        flashed,
       };
     });
   }
@@ -250,6 +252,9 @@ export class Runtime {
       this.log(`sidebar opened a tab for ${url}: ${JSON.stringify(result)}`);
       return result;
     } catch (error) {
+      // A deliberate policy refusal travels with its own code and must not be dressed up
+      // as "the page did not create a tab".
+      if (/PAGE_FOREIGN_SESSION/.test(String(error.message))) throw new Error(String(error.message));
       throw new Error(
         `The DSH page did not create a sidebar tab for ${url}: ${error.message}\n` +
           'This tool opens tabs only through the DSH page; it will not take over an arbitrary existing tab. ' +
@@ -509,7 +514,15 @@ export class Runtime {
   async closePage(request) {
     const pageId = requirePageId(request.pageId);
     requireBridge(this.bridge, 'browser_close');
-    const result = await this.bridge.request('close-page', { pageId }, { timeoutMs: 8_000 });
+    // Closing is an action on one conversation's strip: the handle must belong to the
+    // caller (a registered page, or at least a handle carrying that session's tag — which
+    // is how a tab left over from an earlier run can still be cleaned up).
+    requireOwnership(this.manager, pageId, request.sessionId);
+    const result = await this.bridge.request(
+      'close-page',
+      { pageId, sessionId: request.sessionId },
+      { timeoutMs: 8_000 },
+    );
     if (!result || result.closed !== true) {
       throw new Error(
         `The DSH page did not close this tab: ${result?.reason ?? 'no reason reported'}.\n` +
@@ -644,6 +657,20 @@ export class Runtime {
             // The window can go away between the check above and the capture (a test
             // run starts, the user minimizes): same cause, same precise answer.
             if (this.bridge?.caps?.()?.hidden === true) throw new Error(WINDOW_HIDDEN_MESSAGE);
+            // A page that belongs to a conversation that is not on screen has no surface
+            // at all: bringing its tab to the front cannot help, because the tab strip the
+            // controller can address is the one on screen.
+            const mounted = String(this.bridge?.caps?.()?.mounted ?? '');
+            const owner = this.manager.get(request.pageId)?.sessionId ?? '';
+            const foreignSurface = mounted !== '' && owner !== '' && owner !== mounted;
+            if (foreignSurface) {
+              throw new Error(
+                `The browser could not capture this tab (${error.message}). This page belongs to a conversation ` +
+                  'that is not on screen, so it has no visible surface — Chromium produces no frames for it and ' +
+                  'focusing cannot help. Use browser_snapshot (or browser_run_code) instead: they read the page ' +
+                  'without capturing pixels. To get a picture, switch to that conversation and take it there.',
+              );
+            }
             const hint =
               plan.visible === false
                 ? plan.tabId

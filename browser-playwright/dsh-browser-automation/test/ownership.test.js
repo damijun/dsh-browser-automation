@@ -138,3 +138,24 @@ test('the mounted conversation can still claim the page in view', async () => {
   assert.equal(runtime.manager.get(claimed.pageId).tabId, 'tab1');
 });
 
+
+test('a policy refusal from the page half is not wrapped by the bridge', async () => {
+  const runtime = new Runtime({ config: {} });
+  runtime.cli = { workdir: () => '.', run: async () => ({ stdout: '""', stderr: '', code: 0 }) };
+  runtime.attach = async () => ({ tabs: [] });
+  runtime.driver = { cli: runtime.cli, attached: true, listTabs: async () => ({ tabs: [] }) };
+  runtime.bridge = {
+    hasClient: () => true,
+    clientState: () => 'live',
+    request: async (kind) => {
+      if (kind === 'open-tab') throw new Error('PAGE_FOREIGN_SESSION: not the one on screen');
+      return {};
+    },
+  };
+
+  await assert.rejects(() => runtime.openPage({ sessionId: SESSION, url: 'https://a.test/' }), (error) => {
+    assert.match(error.message, /PAGE_FOREIGN_SESSION/);
+    assert.doesNotMatch(error.message, /did not create a sidebar tab/);
+    return true;
+  });
+});

@@ -503,26 +503,27 @@ DSH 的侧栏是"每个会话一份"，但**只有当前显示的那个会话有
 |---|---|---|
 | 可见操作（`goto`/`reload`/`click`/`fill`/`press`） | **先切到目标 tab 再执行**，用户能看见 | 照常执行，**不聚焦**（也不该聚焦——它不在屏幕上） |
 | `browser_screenshot` | ✅（窗口需可见，见 7.1） | ❌ **无法截图**：没有可见表面 → Chromium 不产帧 |
-| `browser_open` | 走 `ctx.sidebarRight.openTab` | 走内部的 `openTabIn(sessionId, …)`，见下 |
+| `browser_open` | 走 `ctx.sidebarRight.openTab` | 走内部的 `openTabIn`；需要时会**短暂切到该会话**（闪一下）再切回，见下 |
 | `browser_claim` | ✅（接管眼前那页） | ❌ 拒绝（`PAGE_FOREIGN_SESSION`） |
 
-**后台开页**（`openTabIn`）依赖一件确定的运行时事实：**该会话的侧栏是否挂载**。
+**后台关闭**同理：`closeIn(sessionId, tabId)` 在会话没有 adopted store 时**静默 no-op**，而 `close(tabId)` 只作用于屏幕上的那条 strip。
+所以关页也走"短暂点亮"：切到该会话 → `close(tabId)` → 切回；最后用 **DOM 里 chip 是否消失**校验结果（不靠"没有抛异常"）。
 
-| 该会话侧栏 | 结果 |
-|---|---|
-| **已挂载**（可见，或只是被隐藏 `display:none`） | ✅ tab 写进 store，**webview 会被创建**，页面真的加载（实测：隐藏会话里的 B 站页面一直是活的 CDP target） |
-| **已卸载**（keep-alive 淘汰） | ⚠️ tab 只写进 store，**没有 webview**；页面要等 seat 重新挂载才加载（实测约 2 分钟，时机不受插件控制）→ 不可用 |
+**后台开页**（`openTabIn`）依赖一件确定的运行时事实：**该会话的侧栏必须可见（lay out）**。
+可见时 tab 写进 store 后 webview 会被创建、页面真的加载；仅仅是"挂载但隐藏"不够——
+被 keep-alive 淘汰时，tab 只写进 store，没有 webview，页面要等 seat 重新挂载才加载（实测约 2 分钟，时机不可控）。
 
-所以插件按下面的顺序判定，**不靠等**：
+所以后台开页走"**短暂点亮**"流程（你选定的 B 方向）：
 
-1. **前置检查**：DOM 里有 `[data-sidebar-right-session="<sessionId>"]` 吗？没有 → 直接拒绝：
-   *该会话的侧栏当前没挂载（被淘汰了），切过去一次再重试——之后它会保持挂载*；
-2. **成功判据**：`openTabIn` 之后 6 秒内，`tabsIn` 多出一个 tab **且**该子树里出现新的 `<webview>`
-   （webview 才是"页面真的在加载"的证据，比 tab-list 更早）；
-3. **失败回滚**：没等到 webview → 用 `closeIn(sessionId, tabId)` 把 tab 删掉再报错（**绝不留脏 tab**）；
-   宿主的 `waitForNewTab` 若仍失败，也会通过 `close-tab` 命令回滚一次。
+1. 量一下该会话侧栏是否**真的可见**（`[data-sidebar-right-session]` 元素有非零盒子）；挂载但隐藏不算；
+2. 不可见 → `ctx.get("uiWorkspace").openSession(sessionId)` **临时切到该会话**，等它可见（≤3s）；
+3. `openTabIn` 建 tab，等 `tabsIn` 增量 **且**该子树出现新的 `<webview>`（≤6s）——webview 才是"页面真的在加载"的证据；
+4. **立刻 `openSession(原会话)` 切回**（`finally`，失败时也切回）；
+5. 失败回滚：`closeIn(sessionId, tabId)` 删掉 tab 再报错；宿主的 `waitForNewTab` 若仍失败，会用 `close-tab` 再兜底一次。
 
-`browser_open` 的结果带 `background: true` 并在正文里说明："这个会话不在屏幕上，tab 建在后台：不聚焦、不能截图，其它工具照常可用。"
+代价与表现：**窗口会短暂切到该会话再切回**（约 1–2 秒）。结果里会带 `flashed: true`，正文也会说明"窗口曾短暂切到本会话以挂载侧栏"。
+
+**后台截图仍然不行**：这类页面没有可见表面，Chromium 不产帧（实测 25s 超时）。错误信息会直接说清楚并建议改用 `browser_snapshot` / `browser_run_code`；要看图就切到那个会话再截。
 
 ---
 
