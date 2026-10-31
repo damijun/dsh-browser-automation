@@ -54,12 +54,14 @@ export function createTools(runtime) {
       name: 'browser_open',
       description:
         'Open an http(s) or file URL in a new DSH right-sidebar browser tab and take control of it. ' +
-        'This is one of exactly two ways to start work: it creates a real sidebar tab through the DSH UI, ' +
-        'so the user can see the page and keep using it. Use browser_claim instead when the user already ' +
-        'has the page they want open. ' +
-        'This tool fails when the DSH page half is not connected — it never takes over an existing tab as a ' +
-        'substitute, because that could destroy a page the user is working in. ' +
-        'Desktop only: the Web profile has no CDP endpoint to attach to, so no browser_* tool can drive its tabs. ' +
+        'It creates a real sidebar tab through the DSH UI, so the user can see the page and keep using it. ' +
+        'Open a tab only when the sidebar needs an extra one: the column shows one tab at a time and every ' +
+        'tab is a live page the user has to close. Check browser_list first — when a page you already ' +
+        'control no longer needs its current state, browser_goto reaches the new URL in that tab and keeps ' +
+        'its pageId, which is the cheap path. Open what must coexist: a page you keep as it is, a comparison, ' +
+        "the session's first tab. " +
+        'It never takes over an existing tab; use browser_claim for the page the user already has open. ' +
+        'Fails when the DSH page half is not connected. ' +
         PAGE_ID_NOTE,
       parameters: {
         type: 'object',
@@ -159,6 +161,8 @@ export function createTools(runtime) {
       description:
         'List browser tabs with their page handles. scope="session" (default) shows only pages this DSH session controls; ' +
         'scope="all" also shows tabs other sessions control and unmarked tabs. ' +
+        'Read this before browser_open: a page you already control can take the new URL through ' +
+        'browser_goto instead of spending another tab. ' +
         'Always re-read this instead of reusing a page handle from an earlier call.',
       parameters: {
         type: 'object',
@@ -211,6 +215,8 @@ export function createTools(runtime) {
       description:
         'Close one sidebar browser tab by pageId. It removes the DSH sidebar tab itself, so nothing is left behind. ' +
         'It never detaches playwright-cli and never closes DSH. ' +
+        'Close tabs you are done with: the sidebar shows one tab at a time, so a tab you keep open keeps ' +
+        'costing the user attention. ' +
         'Fails when the DSH page half is not connected, because only the page can remove a sidebar tab.',
       parameters: {
         type: 'object',
@@ -459,10 +465,12 @@ export function createTools(runtime) {
     {
       name: 'browser_goto',
       description:
-        'Navigate a controlled page to another URL. The tab is brought to the front first, so the user can see it. ' +
-        'The page handle stays valid: the marker is re-applied after navigation and verified. ' +
-        'Use this to move an existing tab; use browser_open to add a tab.',
-      parameters: {
+        'Navigate a controlled page to another URL in its existing tab. This is the default way to change ' +
+        'address: it costs no new tab, and the page handle stays valid because the marker is re-applied after ' +
+        'the navigation. The tab is brought to the front first, so the user can see it. ' +
+        'The previous page state is not preserved — DOM, scroll and form input are gone after the navigation. ' +
+        'When that state matters (you will come back to it, or the user is working in it), open a second tab ' +
+        'with browser_open and leave this one untouched.',      parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {

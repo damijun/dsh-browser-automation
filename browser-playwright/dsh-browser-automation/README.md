@@ -3,6 +3,9 @@
 让 **DSH 桌面端右侧边栏浏览器**（`@deepseek-ai/dsh-client-ui-sidebar-browser`）变成模型可稳定驱动的自动化目标：
 每个标签页有一个稳定的 `pageId`，模型只传 `pageId`，插件内部每次重新解析 playwright-cli 的标签索引。
 
+> **仅适用于 DSH 桌面端。** Web 版（浏览器里的 DSH）没有可附加的 CDP 端点，所有 `browser_*` 工具都驱动不了它的标签页，
+> 也没有侧边栏 `webview` 可分帧。插件本身不判断平台：它连的是 `cdpPort`，连不上就报错。
+>
 > 开发依据：`../vibe-coding-doc/attach.md`（机制与限制）、`../vibe-coding-doc/tool.md`（工具清单与契约）。
 
 ---
@@ -55,20 +58,30 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 
 | 工具 | 作用 |
 |---|---|
-| `browser_open {url}` | 通过 DSH UI 新建侧边栏标签页 → 注入标记 → 返回 `pageId`。桥不可用即报错，**不会**复用现有标签页。**后台会话**走内部的 `openTabIn`，结果带 `background: true`（不聚焦、不可截图），见 §7.3 |
+| `browser_open {url}` | 通过 DSH UI **新建**侧边栏标签页 → 注入标记 → 返回 `pageId`。只在真的需要多一个 tab 时用（见下方"少开 tab"）。桥不可用即报错，**不会**复用现有标签页。**后台会话**走内部的 `openTabIn`，结果带 `background: true`（不聚焦、不可截图），见 §7.3 |
 | `browser_claim {note?}` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回注入前的标题；替换旧标记，换新 `pageId` |
-| `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页），带实时索引 |
-| `browser_close {pageId}` | **移除 DSH 侧边栏标签页本身**（`ctx.sidebarRight.close(tabId)`）并注销登记；不是 CLI 的 `tab-close` |
+| `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页），带实时索引。**开页前先看这里** |
+| `browser_close {pageId}` | **移除 DSH 侧边栏标签页本身**（`ctx.sidebarRight.close(tabId)`）并注销登记；不是 CLI 的 `tab-close`。用完的页顺手关掉 |
 | `browser_snapshot {pageId, depth?}` | 可访问性快照（含 `[ref=…]`），内容原样返回，不做二次压缩 |
 | `browser_screenshot {pageId, fullPage?, target?}` | 截图存盘，返回绝对路径（不内联字节） |
 | `browser_click {pageId, ref, button?, double?, modifiers?}` | 点击 |
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
-| `browser_goto {pageId, url}` | 让该 tab 进入这个 URL；**先把 tab 切到前台**，用户能看见；标记由 init script 自动续上并复核 |
+| `browser_goto {pageId, url}` | 让该 tab 进入这个 URL（**换地址的默认方式**：不新增 tab、`pageId` 不变）；**先把 tab 切到前台**，用户能看见；标记由 init script 自动续上并复核 |
 | `browser_reload {pageId}` | 重新加载该页 —— 实现为 **`goto` 同一个 URL**，同样先切到前台。**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面（无论当前选中哪个 tab），侧边栏页面全丢 |
 | `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。历史导航 `page.goBack()` / `page.goForward()` 同样在这里用，不做单独工具 |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
 | `browser_status {action}` | `status` / `attach` / `detach` / `panel`；连接出问题先看它，`panel` 打开状态面板 |
+
+**少开一个 tab 的判据**：侧栏同一时刻只显示一个 tab，每个 tab 都是一张活页面，用户还得自己关。
+所以"要去另一个地址"本身**不是**开新 tab 的理由——只要当前这页的状态不重要，`browser_goto` 就是更便宜的做法：
+不新增 tab、`pageId` 不变、标记自动续上。只有下面这些情况才用 `browser_open`：
+
+- 两页要**同时存在**（对照、反复来回、跨页取信息）；
+- 当前页的状态（登录、表单、滚动位置、进行中的操作）**不能丢**；
+- 这个会话还没有任何自己的页。
+
+`browser_open` 从不接管已有 tab（那会毁掉用户正在做的事）；要接管用户眼前那页用 `browser_claim`。
 
 **可见性约定**：`browser_goto`、`browser_reload`、`browser_click`、`browser_fill`、`browser_press` 都会**先把目标 tab 切到前台**（必要时展开收起的侧边栏）再执行，这样用户能看到插件在做什么。聚焦是尽力而为：定位不到 tab 时操作照常进行，失败时报真实原因。
 
