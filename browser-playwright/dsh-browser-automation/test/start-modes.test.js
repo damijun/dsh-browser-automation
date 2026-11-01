@@ -172,12 +172,11 @@ test('claim takes over the visible page even when the CLI current tab is elsewhe
   const { runtime, cliCalls, marked } = harness({ bridge, tabs, marker: 'Visible page' });
   runtime.manager.register({ pageId: oldPageId, sessionId: 's1', url: 'https://other.test/', source: 'open' });
 
-  const claimed = await runtime.claimPage({ sessionId: 's1', note: 'user logged in' });
+  const claimed = await runtime.claimPage({ sessionId: 's1' });
   assert.match(claimed.pageId, /^dshpg-[0-9a-f]{6}-[0-9a-f]{8}$/);
   assert.equal(claimed.url, 'https://visible.test/x');
   // The returned title is the tab's own title before the marker was installed.
   assert.equal(claimed.title, 'Visible');
-  assert.equal(claimed.note, 'user logged in');
   assert.equal(claimed.replacedExistingPageId, undefined);
   // Claiming hands the visible tab (index 2) to the installer, which selects it under
   // the driver's CLI lock; no standalone tab-select may happen out here.

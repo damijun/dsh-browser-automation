@@ -126,9 +126,7 @@ export function createTools(runtime) {
       parameters: {
         type: 'object',
         additionalProperties: false,
-        properties: {
-          note: string('Optional reminder of why the page is being taken over; echoed back.'),
-        },
+        properties: {},
       },
       output: {
         schema: {
@@ -138,7 +136,6 @@ export function createTools(runtime) {
             pageId: string('Stable page handle for every later call.'),
             title: string('Page title before the marker was replaced.'),
             url: string('Current URL.'),
-            note: string('The note that was passed in, if any.'),
             replacedExistingPageId: string(
               'Present when the tab already carried a marker: the pageId it lost, now unregistered.',
             ),
@@ -152,7 +149,7 @@ export function createTools(runtime) {
       },
       async execute(args, exec) {
         const sessionId = requireSession(exec);
-        return sanitize(await runtime.claimPage({ sessionId, note: args.note, signal: exec.signal }));
+        return sanitize(await runtime.claimPage({ sessionId, signal: exec.signal }));
       },
     },
 

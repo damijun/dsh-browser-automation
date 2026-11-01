@@ -51,7 +51,7 @@
 验证：`browser_status` 的 `cdp.url` 就是插件这次实际连的地址（它一定来自 `DevToolsActivePort`）；
 `Invoke-WebRequest <那个地址>/json/version` 能返回 JSON。
 
-playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插件用
+playwright-cli 默认假定已全局安装（`npm install -g @playwright/cli@latest`）。插件用
 `%PATH%` 里的 `playwright-cli.cmd` 找到它指向的 JS 入口，再用当前 Node 直接执行，
 **不经过 shell**——所以带引号、方括号、`$` 的 ref 和表达式不会被任何引号规则破坏。
 
@@ -65,7 +65,7 @@ playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插
 | 工具 | 作用 |
 |---|---|
 | `browser_open {url}` | 通过 DSH UI **新建**侧边栏标签页 → 注入标记 → 返回 `pageId`。只在真的需要多一个 tab 时用（见下方"少开 tab"）。桥不可用即报错，**不会**复用现有标签页。**后台会话**走内部的 `openTabIn`，结果带 `background: true`（不聚焦、不可截图），见 §7.3 |
-| `browser_claim {note?}` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回注入前的标题；替换旧标记，换新 `pageId` |
+| `browser_claim` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回注入前的标题；替换旧标记，换新 `pageId`。无参数 |
 | `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页），带实时索引。**开页前先看这里** |
 | `browser_close {pageId}` | **移除 DSH 侧边栏标签页本身**（`ctx.sidebarRight.close(tabId)`）并注销登记；不是 CLI 的 `tab-close`。用完的页顺手关掉 |
 | `browser_snapshot {pageId, depth?}` | 可访问性快照（含 `[ref=…]`），内容原样返回，不做二次压缩 |

@@ -464,7 +464,7 @@ export class Runtime {
    * never follows a sidebar tab switch, and picking it would mean taking over a page
    * nobody asked for. If the page half cannot answer, claim fails and says why.
    *
-   * @param {{ sessionId: string, note?: string, signal?: AbortSignal }} request
+   * @param {{ sessionId: string, signal?: AbortSignal }} request
    */
   async claimPage(request) {
     const driver = this.ensureDriver();
@@ -490,7 +490,6 @@ export class Runtime {
       pageId,
       title: originalTitle,
       url: target.url,
-      note: request.note,
       replacedExistingPageId: previousIds[0],
     };
   }
