@@ -4,7 +4,7 @@
 每个标签页有一个稳定的 `pageId`，模型只传 `pageId`，插件内部每次重新解析 playwright-cli 的标签索引。
 
 > **仅适用于 DSH 桌面端。** Web 版（浏览器里的 DSH）没有可附加的 CDP 端点，所有 `browser_*` 工具都驱动不了它的标签页，
-> 也没有侧边栏 `webview` 可分帧。插件本身不判断平台：它连的是 `cdpPort`，连不上就报错。
+> 也没有侧边栏 `webview` 可分帧。插件本身不判断平台：它连的是 `DevToolsActivePort` 记录的端口，连不上就按 `diagnosis` 报错。
 >
 > 开发依据：`../vibe-coding-doc/attach.md`（机制与限制）、`../vibe-coding-doc/tool.md`（工具清单与契约）。
 
@@ -40,10 +40,16 @@
 插件已经装进 `desktop` profile（bundle `@local/dsh-browser-automation`，row `browser-automation`）。
 重新安装用 Plugin Manager 的 `install_bundle`，`target` 指向本目录；不要手改 profile 的 `package.json`。
 
-**DSH 桌面端必须以远程调试端口启动**，否则 playwright-cli 无法附加：
+**DSH 桌面端必须以远程调试端口启动**，否则 playwright-cli 无法附加。两种写法：
 
-- 快捷方式 → 属性 → 目标，在 exe 路径后面追加 `--remote-debugging-port=9222`，然后**完全退出并重启 DSH**。
-- 验证：`Invoke-WebRequest http://127.0.0.1:9222/json/version` 能返回 JSON。
+- **推荐：`--remote-debugging-port=0`**（快捷方式 → 属性 → 目标，在 exe 路径后面追加，然后**完全退出并重启 DSH**）。
+  每次启动由 Chromium 自己挑一个空闲端口，并写进 DSH 用户数据目录下的 `DevToolsActivePort`；
+  插件读这个文件拿真实端口，所以**不会再有端口冲突**，也不需要把端口写死在任何地方——插件里**没有端口设置项**。
+- 固定端口：`--remote-debugging-port=9222`。也能用，但见 §6.2 的警告：这个端口会被上一代 DSH 的残留端点占住，
+  新实例会静默 bind 失败，插件看到的现象就是 `ECONNREFUSED`。
+
+验证：`browser_status` 的 `cdp.url` 就是插件这次实际连的地址（它一定来自 `DevToolsActivePort`）；
+`Invoke-WebRequest <那个地址>/json/version` 能返回 JSON。
 
 playwright-cli 默认假定已全局安装（`npm i -g @playwright/cli`）。插件用
 `%PATH%` 里的 `playwright-cli.cmd` 找到它指向的 JS 入口，再用当前 Node 直接执行，
@@ -114,7 +120,8 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 | 字段 | 说明 |
 |---|---|
 | `attached` | **这次调用是否读到了 tab-list**。`status` 会在没连上时顺手 attach，所以 `true` = "现在能看见应用里的页面"；`false` 时看 `note` |
-| `cdpUrl` | 插件连的调试端点，由 `cdpPort` 与固定主机 `127.0.0.1` 拼出来（`cdpPort` 必须等于桌面端的 `--remote-debugging-port`） |
+| `cdpUrl` | **这次实际连的**调试端点 = `DevToolsActivePort` 记录的端口。连不上时是插件去看的那个端口；还没解析出来时为 `null` |
+| `cdp` | 端点判定：`{url, port, diagnosis, file}`。`diagnosis`：`serving` 正常、`absent` 记录里的端口空着且无人应答（DSH 没启动，或没带参数、记录是旧的）、`stale` 端口被占但不应答（残留端点）、`no-record` 找不到记录文件 |
 | `currentIndex` | playwright-cli **自己的**"当前页"指针。daemon 全局状态，任何 `browser_*` 都会改它；re-attach 后回到应用页 |
 | `cli.command` / `cli.session` | 配置的命令名、`-s=` 会话名（所有 DSH 会话共用一个 daemon） |
 | `cli.resolved.node` | 实际跑 CLI 的 **node 解释器**（Host 是 Electron，`process.execPath` 不是 node） |
@@ -391,7 +398,7 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
   name: '@local/dsh-browser-automation'
   config:
     session: dsh                 # playwright-cli -s=；所有 DSH 会话共用一个
-    cdpPort: 9222                # 见下：必须和启动参数一致
+    cdpPortFile: auto            # DevToolsActivePort 的位置；auto = %APPDATA%\@deepseek-ai\dsh-desktop\
     showSharedBadge: true        # 地址栏右端的「正在与智能体共享」浮标（见 6.1；不写进页面）
     command: playwright-cli      # 或绝对路径
     nodePath: auto               # 见下：哪个 node 去跑 CLI 的 .js 入口
@@ -403,14 +410,21 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
     debug: false                 # true 时用 console.debug 打印桥与 CLI 诊断
 ```
 
-> ⚠️ **`cdpPort` 只是"告诉插件去哪里找"，不会改变 DSH 监听哪个端口。**
-> 这个端口由 **DSH 桌面端的启动参数**决定（快捷方式 → 目标后面加 `--remote-debugging-port=9222`）。
-> 所以换端口要做**两件事**：改启动参数、把这里改成同一个数字。只改这里，插件会连到一个没人监听的端口。
+> ⚠️ **没有端口设置项，这是故意的。**
 >
-> 为什么只有端口：Electron 的调试端口**只绑回环地址**（`127.0.0.1`），主机名是固定的，不需要也不能配。
+> 端口只有一个来源：DSH 的启动参数。`--remote-debugging-port=0` 让 Chromium 每次挑一个空闲端口，
+> `--remote-debugging-port=N` 固定 N，不带参数则**根本不启动 DevTools 服务**。插件在宿主进程里运行，
+> 既不能创建也不能搬动这个服务；它能做的只有读 `DevToolsActivePort`（Chromium 写下的两行文件）找到它。
 >
-> 旧版本的 patch 里如果写的是 `cdpUrl: http://127.0.0.1:9222`，仍然会被识别（从中解析端口），
-> 但设置卡片不显示它；确认新值后可以把那行删掉。
+> 所以任何"插件端口设置"都只有两种结局：和启动参数一致时是多余的，不一致时是错的。这里把它删掉了，
+> 只保留 `cdpPortFile`（隐藏项）用来应对用户数据目录不在默认位置的情况。
+>
+> 端口的另一个事实：Electron 的调试端口**只绑回环地址**（`127.0.0.1`），主机名固定，不需要也不能配。
+>
+> 固定端口的坑在 Windows 上真实发生过：上一代 DSH 的监听套接字被一个活得更久的子进程继承下来，
+> 端口一直"被占但没人应答"，新实例**静默 bind 失败**，插件只能拿到 `ECONNREFUSED`；这种情况下重启 DSH 也没用。
+> `browser_status.cdp.diagnosis` 会把失败分成 `stale`（被占但不应答）、`absent`（记录里的端口空着且无人应答）、
+> `no-record`（压根没有记录文件）。
 
 ### `autoAttach`：开机自动 attach（默认开）
 
@@ -615,7 +629,9 @@ node --test
 
 | 现象 | 先做什么 |
 |---|---|
-| `Could not attach playwright-cli to DSH at http://127.0.0.1:9222` | DSH 没带 `--remote-debugging-port=9222` 启动；改快捷方式并重启 |
+| `Could not attach … Port N is held but nothing answers on it`（`cdp.diagnosis: stale`） | **端口被上一代残留端点占着**，不是缺参数：先彻底退出 DSH，再结束真正持有该端口的助手进程（`Get-NetTCPConnection -LocalPort N` 显示的 PID 往往已经不存在，真正持有者是活过 DSH 的 `node.exe`），然后重启 DSH。根治：启动参数改成 `--remote-debugging-port=0` |
+| `… names port N, but nothing answers there and the port is free`（`cdp.diagnosis: absent`） | DSH 没启动，或没带 `--remote-debugging-port` 启动（记录是上一次的）：带参数重启，推荐 `--remote-debugging-port=0` |
+| `Could not find the DSH DevTools endpoint`（`cdp.diagnosis: no-record`） | 找不到 `DevToolsActivePort`：DSH 没带调试参数启动，或用户数据目录不在默认位置；按提示用 `--remote-debugging-port=0` 重启，或把隐藏项 `cdpPortFile` 指向真实位置 |
 | `browser_open` / `browser_claim` 报 `needs the DSH page` | 页面半边没连上（`bridge.state` 为 `never`/`stale`）：刷新 DSH 窗口，1 秒内会自己重连；仍不行看 `bridgeError` |
 | `browser_claim` 报 `Could not see a browser page` | 侧边栏没展开，或没选中浏览器标签页；展开并选中后重试 |
 | `browser_claim` 报 `not in playwright-cli's tab list yet` | 页面还在加载：等一秒重试，或 `browser_list` 看 CLI 能看到什么 |

@@ -83,7 +83,7 @@ export class PageDriver {
   /**
    * @param {import('./cli.js').CliBridge} cli
    * @param {object} options
-   * @param {string} options.cdpUrl
+   * @param {string} [options.cdpUrl] endpoint to attach to; set before any attach runs
    * @param {{ badge?: boolean }} [options.marker] page marker/badge defaults
    * @param {(message: string) => void} [options.log]
    */

@@ -34,7 +34,6 @@ test('every editable key has a declared type and nothing else is writable', () =
   assert.deepEqual(Object.keys(EDITABLE_KEYS).sort(), [
     'attachTimeoutMs',
     'autoAttach',
-    'cdpPort',
     'command',
     'debug',
     'nodePath',

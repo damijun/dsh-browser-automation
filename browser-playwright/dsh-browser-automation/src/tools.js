@@ -641,7 +641,36 @@ export function createTools(runtime) {
           properties: {
             action: string(),
             attached: boolean(),
-            cdpUrl: string(),
+            cdpUrl: {
+              oneOf: [{ type: 'string' }, { type: 'null' }],
+              description:
+                'The endpoint this call actually used (or looked for, when nothing answered). Null when no record ' +
+                'resolved it.',
+            },
+            cdp: {
+              oneOf: [
+                { type: 'null' },
+                {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    url: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                    port: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
+                    diagnosis: string(
+                      'serving = /json/version answered; absent = the recorded port is free and silent (DSH down, or started ' +
+                        'without the flag); stale = the port is held but nothing answers (a leftover endpoint); no-record = ' +
+                        'no DevToolsActivePort at all.',
+                    ),
+                    file: { oneOf: [{ type: 'string' }, { type: 'null' }] },
+                  },
+                  required: ['url', 'port', 'diagnosis'],
+                },
+              ],
+              description:
+                "The endpoint Chromium recorded, and — when nothing answered — which failure it was. The port is always " +
+                "DSH's decision (launch argument); this plugin only finds it. stale means a leftover endpoint from a " +
+                'previous run holds the port (restarting does not clear it; --remote-debugging-port=0 cannot hit it).',
+            },
             cli: {
               type: 'object',
               additionalProperties: true,

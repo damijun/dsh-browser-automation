@@ -15,7 +15,6 @@ export const EDITABLE_KEYS = {
   nodePath: 'string',
   command: 'string',
   session: 'string',
-  cdpPort: 'number',
   autoAttach: 'boolean',
   showSharedBadge: 'boolean',
   timeoutMs: 'number',

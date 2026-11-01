@@ -147,7 +147,6 @@ window.__ModuleLoader__.load({
         'cfg.field.nodePath': 'Node path',
         'cfg.field.command': 'CLI command',
         'cfg.field.session': 'CLI session name',
-        'cfg.field.cdpPort': 'CDP port',
         'cfg.field.timeoutMs': 'CLI timeout (ms)',
         'cfg.field.requestTimeoutMs': 'Bridge timeout (ms)',
         'cfg.field.screenshotSettleMs': 'Screenshot settle (ms)',
@@ -156,15 +155,13 @@ window.__ModuleLoader__.load({
         'cfg.auto': 'Auto',
         'cfg.path': 'PATH',
         'cfg.custom': 'Custom path',
-        'cfg.customPlaceholder': 'absolute path to node.exe',
+        'cfg.customPlaceholder': 'absolute path to node.exe,eg.C:\\Program Files\\nodejs\\node.exe',
         'cfg.on': 'On',
         'cfg.off': 'Off',
         'cfg.overridden': 'overridden',
         'cfg.desc.nodePath': 'Auto prefers the Node DSH ships, then PATH.',
         'cfg.desc.command': 'Command name on PATH, or an absolute path.',
         'cfg.desc.session': 'playwright-cli -s= name; every DSH session shares it.',
-        'cfg.desc.cdpPort':
-          'Must equal --remote-debugging-port in the DSH launch arguments (Electron only binds 127.0.0.1). Changing it here does not move the port DSH listens on - edit the shortcut or launch script too.',
         'cfg.desc.timeoutMs': 'Per-call timeout for one CLI invocation.',
         'cfg.desc.requestTimeoutMs': 'How long a tool waits for the page half to answer.',
         'cfg.field.attachTimeoutMs': 'Attach timeout (ms)',
@@ -223,7 +220,6 @@ window.__ModuleLoader__.load({
         'cfg.field.nodePath': 'Node 路径',
         'cfg.field.command': 'CLI 命令',
         'cfg.field.session': 'CLI 会话名',
-        'cfg.field.cdpPort': 'CDP 端口',
         'cfg.field.timeoutMs': 'CLI 超时（ms）',
         'cfg.field.requestTimeoutMs': '桥超时（ms）',
         'cfg.field.screenshotSettleMs': '截图首帧等待（ms）',
@@ -232,15 +228,13 @@ window.__ModuleLoader__.load({
         'cfg.auto': '自动',
         'cfg.path': 'PATH',
         'cfg.custom': '自定义路径',
-        'cfg.customPlaceholder': 'node.exe 的绝对路径',
+        'cfg.customPlaceholder': 'node.exe的绝对路径,例如C:\\Program Files\\nodejs\\node.exe',
         'cfg.on': '开启',
         'cfg.off': '关闭',
         'cfg.overridden': '已覆盖',
         'cfg.desc.nodePath': '自动：优先用 DSH 自带的 Node，其次是 PATH。',
         'cfg.desc.command': 'PATH 上的命令名，或绝对路径。',
         'cfg.desc.session': 'playwright-cli 的 -s= 会话名；所有 DSH 会话共用。',
-        'cfg.desc.cdpPort':
-          '必须与 DSH 启动参数 --remote-debugging-port 一致（Electron 只绑 127.0.0.1）。在这里改端口不会改变 DSH 实际监听的端口——还需要改快捷方式/启动脚本里的参数。',
         'cfg.desc.timeoutMs': '单次 CLI 调用的超时时间。',
         'cfg.desc.requestTimeoutMs': '等页面半边回答的最长时间。',
         'cfg.field.attachTimeoutMs': 'Attach 超时（ms）',
@@ -626,6 +620,12 @@ window.__ModuleLoader__.load({
               h('span', { key: 'k' }, 'CDP'),
               dot(Boolean(data && data.attached), data && data.attached ? 'connected' : 'disconnected'),
               h('span', { key: 'url', className: 'dshba-mono dshba-label' }, dash(data && data.cdpUrl)),
+              // The URL alone cannot explain a failure: "stale" (a leftover endpoint holds
+              // the port) and "absent" (no flag, or DSH gone) look identical from here and
+              // need different fixes.
+              data && data.cdp && data.cdp.diagnosis && data.cdp.diagnosis !== 'serving'
+                ? h('span', { key: 'diag', className: 'dshba-tag' }, `! ${data.cdp.diagnosis}`)
+                : null,
             ]),
             h('div', { key: 'bridge', className: 'dshba-row' }, [
               h('span', { key: 'k' }, 'Bridge'),
@@ -712,7 +712,6 @@ window.__ModuleLoader__.load({
       { key: 'nodePath', kind: 'text' },
       { key: 'command', kind: 'text' },
       { key: 'session', kind: 'text' },
-      { key: 'cdpPort', kind: 'number' },
       { key: 'timeoutMs', kind: 'number' },
       { key: 'attachTimeoutMs', kind: 'number' },
       { key: 'requestTimeoutMs', kind: 'number' },

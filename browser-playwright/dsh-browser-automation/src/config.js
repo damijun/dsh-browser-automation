@@ -32,17 +32,17 @@ const fields = {
     .default('auto')
     .description('Which Node runs the CLI: "auto", "path", or an absolute path.'),
 
-  cdpPort: z
-    .number()
-    .default(9222)
+  // Advanced, and hidden from the form: the file Chromium writes the port it really
+  // bound. The plugin has no port setting at all — the launch argument decides the
+  // port, and this file is how that decision reaches the plugin. Only needed when the
+  // user-data directory moves.
+  cdpPortFile: z
+    .string()
+    .default('auto')
     .description(
-      'Port of the CDP endpoint (Electron binds 127.0.0.1 only). It must match the ' +
-        '--remote-debugging-port launch argument DSH Desktop was started with.',
+      'Where Chromium records the debugging port it actually bound ("auto" = ' +
+        '%APPDATA%\\@deepseek-ai\\dsh-desktop\\DevToolsActivePort). Set an absolute path to override.',
     ),
-
-  // Deprecated: older patches stored a full URL. Still accepted so an upgrade never
-  // fails validation, and never shown in the form (it is not volatile).
-  cdpUrl: z.string().description('Deprecated: use cdpPort.'),
 
   autoAttach: z
     .boolean()
@@ -88,35 +88,11 @@ const fields = {
   debug: z.boolean().default(false).description('Print bridge and CLI diagnostics with console.debug.'),
 };
 
-/**
- * Resolve the CDP port from configuration.
- *
- * `cdpPort` is the setting, because the host half is fixed: Electron's debugging
- * port only ever binds loopback, so the user changes the number and nothing else.
- * A full URL set by an older patch still works — the port is read out of it — so
- * upgrading a profile never turns into a validation failure.
- *
- * @param {unknown} port
- * @param {unknown} legacyUrl
- * @returns {number}
- */
-export function cdpPortOf(port, legacyUrl) {
-  const direct = typeof port === 'number' ? port : Number(String(port ?? '').trim());
-  if (Number.isInteger(direct) && direct > 0 && direct < 65_536) return direct;
-  const fromUrl = String(legacyUrl ?? '').match(/:(\d{1,5})\/?$/);
-  if (fromUrl) {
-    const parsed = Number(fromUrl[1]);
-    if (Number.isInteger(parsed) && parsed > 0 && parsed < 65_536) return parsed;
-  }
-  return 9222;
-}
-
-/** Only these appear in the settings form; `cdpUrl` stays accepted but hidden. */
+/** Only these appear in the settings form; `cdpPortFile` stays accepted but hidden. */
 const VOLATILE = [
   'session',
   'command',
   'nodePath',
-  'cdpPort',
   'autoAttach',
   'showSharedBadge',
   'timeoutMs',

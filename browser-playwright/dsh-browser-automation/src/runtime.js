@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { resolveCdpTarget } from './cdp-target.js';
 import { CliBridge } from './cli.js';
 import { PageDriver } from './driver.js';
 import { newPageId, sessionTag, extractPageIds } from './page-id.js';
@@ -7,6 +8,30 @@ import { SessionManager, discover } from './sessions.js';
 import { resolveIndex } from './tab-list.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The endpoint an attach attempt settled on, as resolved by `resolveCdp()`.
+ *
+ * There is one source by design: the port Chromium recorded. The launch argument
+ * decides what DSH listens on, nothing in this plugin can change it, so a record is
+ * the only honest answer to "where is it?".
+ *
+ * `diagnosis` only carries meaning when the probe failed:
+ * - `serving`   — `/json/version` answered; `url` works right now.
+ * - `absent`    — the recorded port is free and silent: DSH is down, or it was started
+ *                 without `--remote-debugging-port` and the record is stale.
+ * - `stale`     — the recorded port is held but nothing answers: a previous instance
+ *                 left the listening socket behind, so DSH could not bind it.
+ * - `no-record` — there is no `DevToolsActivePort` to follow at all.
+ *
+ * @typedef {object} CdpTarget
+ * @property {string | undefined} url
+ * @property {number | null} port
+ * @property {string | undefined} file
+ * @property {number | null} activePort
+ * @property {'serving' | 'absent' | 'stale' | 'no-record'} diagnosis
+ * @property {{ webSocketDebuggerUrl: string, Browser?: string } | undefined} [version]
+ */
 
 /**
  * The one place that composes CLI access, the page registry and the DSH page
@@ -45,6 +70,15 @@ export class Runtime {
     this.cli = undefined;
     this.openLock = Promise.resolve();
     this.attached = false;
+    /**
+     * The endpoint the last attach resolved: `{ url, port, diagnosis, file }`.
+     *
+     * `diagnosis` is what to tell the user when nothing answered — see
+     * {@link Runtime#attachHint}.
+     *
+     * @type {CdpTarget | undefined}
+     */
+    this.cdp = undefined;
     /**
      * Outcome of the startup attach, for `browser_status` and the panel.
      *
@@ -127,7 +161,9 @@ export class Runtime {
       // Never paint into the page: the visual marker is the overlay badge the client half
       // draws above the sidebar (shell.overlay), the title token stays as the join key.
       marker: { badge: false },
-      cdpUrl: String(this.config.cdpUrl ?? 'http://127.0.0.1:9222'),
+      // Set for real by resolveCdp() before any attach: the port is not knowable
+      // before Chromium's record is read.
+      cdpUrl: undefined,
       attachTimeoutMs: Number(this.config.attachTimeoutMs ?? 60_000),
       screenshotTimeoutMs: Number(this.config.screenshotTimeoutMs ?? 25_000),
       log: this.log,
@@ -135,30 +171,116 @@ export class Runtime {
     return this.driver;
   }
 
+  /** Absolute path of the DevToolsActivePort record, or `undefined` for "auto". */
+  cdpPortFile() {
+    const value = this.config.cdpPortFile;
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed === '' || trimmed === 'auto' ? undefined : trimmed;
+  }
+
   /**
-   * Attach, translating the CLI's generic failure into the action the user has
-   * to take. The overwhelming cause is DSH not being started with the debugging
-   * port, and no other message tells the user that.
+   * Find the endpoint to attach to, and point the driver at it.
+   *
+   * There is no configured port to fall back to: the launch argument decides what DSH
+   * listens on, `DevToolsActivePort` records it, and this plugin follows the record.
+   * Re-resolved on every attach attempt because Chromium writes the file while DSH is
+   * still starting, and the startup attach retries — so a record that appears between
+   * two attempts has to be picked up by the attempt that follows it.
+   */
+  async resolveCdp() {
+    const target = await resolveCdpTarget({
+      portFile: this.cdpPortFile(),
+      // Test seams: the unit tests drive discovery without a live browser.
+      readPort: this.cdpReadPort,
+      probe: this.cdpProbe,
+      portFree: this.cdpPortFree,
+      log: this.log,
+    });
+    this.cdp = target;
+    if (this.driver) this.driver.cdpUrl = target.url;
+    return target;
+  }
+
+  /**
+   * Attach, translating the CLI's failure into the action the user has to take.
+   *
+   * Three different failures used to share one message ("add --remote-debugging-port
+   * =9222"), and that was wrong most of the time: a port left behind by the previous
+   * instance refuses the connection just as loudly as a missing flag, and re-adding
+   * the flag never fixes it. {@link Runtime#resolveCdp} already knows which one
+   * happened.
    */
   async attach(signal) {
     const driver = this.ensureDriver();
+    let target;
     try {
+      target = await this.resolveCdp();
       const listing = await driver.ensureAttached();
       this.attached = true;
       return listing;
     } catch (error) {
       this.attached = false;
-      const cdpUrl = String(this.config.cdpUrl ?? 'http://127.0.0.1:9222');
-      const hint =
-        `Could not attach playwright-cli to DSH at ${cdpUrl}.\n` +
-        `1. Make sure DSH Desktop is running with --remote-debugging-port=${new URL(cdpUrl).port || '9222'} ` +
-        '(append it to the shortcut\'s Target after the .exe path, then restart DSH).\n' +
-        '2. Check the endpoint: Invoke-WebRequest http://127.0.0.1:9222/json/version\n' +
-        '3. Check the CLI: playwright-cli list';
-      const wrapped = new Error(`${hint}\n\nUnderlying error: ${error.message}`);
+      const wrapped = new Error(`${this.attachHint(target)}\n\nUnderlying error: ${error.message}`);
       wrapped.cause = error;
       throw wrapped;
     }
+  }
+
+  /**
+   * What to tell the user when no endpoint answered.
+   *
+   * `stale` is the case that had no explanation before this plugin knew about
+   * `DevToolsActivePort`: the port is held, nothing answers, and DSH has already lost
+   * the bind — so the fix is to clear the leftover, not to edit the shortcut.
+   *
+   * @param {CdpTarget | undefined} target
+   */
+  attachHint(target) {
+    const diagnosis = target?.diagnosis ?? 'no-record';
+    const port = target?.port;
+    const file = target?.file ?? 'DevToolsActivePort';
+    const where = target?.url;
+    const lines = [
+      where
+        ? `Could not attach playwright-cli to DSH at ${where}.`
+        : 'Could not find the DSH DevTools endpoint: there is no usable DevToolsActivePort record.',
+    ];
+
+    if (diagnosis === 'stale') {
+      lines.push(
+        `Port ${port} is held but nothing answers on it, and this endpoint's record is at ${file}. Either DSH ` +
+          'Desktop is not running and a previous session left its listener behind, or DSH could not bind the ' +
+          'port at startup (the usual cause is that leftover: its listening socket was inherited by a helper ' +
+          'process that outlived the app, so it was never released). Restarting DSH alone does not clear it.',
+        '1. Quit DSH Desktop completely.',
+        `2. End the helper that still owns it: Get-NetTCPConnection -LocalPort ${port} names a PID that no longer ` +
+          'exists (the socket creator); the real holder is a process that outlived DSH, usually node.exe.',
+        `3. Start DSH again, then check: Invoke-WebRequest ${where}/json/version`,
+        'Launching with --remote-debugging-port=0 prevents this: each run gets a fresh port, and this plugin ' +
+          `follows it from ${file}.`,
+      );
+    } else if (diagnosis === 'absent') {
+      lines.push(
+        `The record at ${file} names port ${port}, but nothing answers there and the port is free. DSH Desktop ` +
+          'is probably not running, or it is running without --remote-debugging-port (the record would then be ' +
+          'left over from an earlier run).',
+        '1. Start DSH with the flag: append --remote-debugging-port=0 to the shortcut target, after the .exe path.',
+        '2. If DSH is already running, it was started without the flag — quit it and start it again with the flag.',
+        `3. Check the record afterwards: Get-Content ${file} should show a port and a /devtools/browser/ path.`,
+      );
+    } else {
+      lines.push(
+        'DSH Desktop only opens a debugging endpoint when it is started with --remote-debugging-port, and this ' +
+          'plugin can only find it through the record Chromium writes.',
+        '1. Quit DSH Desktop, then start it with --remote-debugging-port=0 appended to the shortcut target ' +
+          '(after the .exe path). Every launch then picks a free port and the plugin follows it.',
+        "2. If it already has that flag, the record went somewhere else: point cdpPortFile at that directory's DevToolsActivePort file.",
+        '3. A fixed port works too (--remote-debugging-port=9222), with the leftover-endpoint risk described in README §6.2.',
+      );
+    }
+    lines.push('Check the CLI: playwright-cli list');
+    return lines.join('\n');
   }
 
   /** Serialize tab creation so two concurrent browser_open calls cannot race. */
@@ -845,7 +967,11 @@ export class Runtime {
     const base = {
       action: request.action,
       attached: false,
-      cdpUrl: String(this.config.cdpUrl ?? 'http://127.0.0.1:9222'),
+      // Null until discovery runs: the endpoint is Chromium's decision, not a setting.
+      cdpUrl: null,
+      // Where the port actually came from and what an unreachable endpoint means.
+      // Filled in by finish(), after attach() has had a chance to resolve it.
+      cdp: null,
       cli: { command: String(this.config.command ?? 'playwright-cli'), session: String(this.config.session ?? 'dsh') },
       bridgeError: this.health?.bridgeError ?? null,
       currentIndex: -1,
@@ -866,6 +992,17 @@ export class Runtime {
      * connected in between. One snapshot, taken when everything else is settled.
      */
     const finish = () => {
+      // The endpoint is only known once attach() resolved it (or failed to), and the
+      // panel is where the user looks when it did fail — so report the real one.
+      if (this.cdp) {
+        base.cdpUrl = this.cdp.url ?? null;
+        base.cdp = {
+          url: this.cdp.url ?? null,
+          port: this.cdp.port,
+          diagnosis: this.cdp.diagnosis,
+          file: this.cdp.file ?? null,
+        };
+      }
       base.bridge = this.bridge ? this.bridge.snapshot() : { state: 'never', clients: [] };
       return base;
     };

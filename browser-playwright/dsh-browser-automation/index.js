@@ -1,5 +1,5 @@
 import { Bridge, readJsonBody } from './src/bridge.js';
-import { Config, cdpPortOf } from './src/config.js';
+import { Config } from './src/config.js';
 import { applyConfigChange, composeConfigValues, findRow, resetConfigKey } from './src/config-write.js';
 import { Runtime } from './src/runtime.js';
 import { createTools } from './src/tools.js';
@@ -70,15 +70,14 @@ const ROW_ID = 'browser-automation';
  */
 export function apply(ctx, config) {
   const source = config ?? {};
-  const cdpPort = cdpPortOf(read(source.cdpPort, undefined), read(source.cdpUrl, undefined));
   const settings = {
     session: read(source.session, 'dsh'),
     command: read(source.command, 'playwright-cli'),
     nodePath: read(source.nodePath, 'auto'),
-    // The setting is a port because the host half is fixed (loopback only); the URL
-    // is derived here so the driver and the status output keep one shape.
-    cdpPort,
-    cdpUrl: `http://127.0.0.1:${cdpPort}`,
+    // Where Chromium records the port it really bound — written next to the app's
+    // user data. There is deliberately no port setting: the launch argument decides
+    // the port, and this record is the only way that decision reaches the plugin.
+    cdpPortFile: read(source.cdpPortFile, 'auto'),
     autoAttach: read(source.autoAttach, true) !== false,
     timeoutMs: read(source.timeoutMs, 20_000),
     requestTimeoutMs: read(source.requestTimeoutMs, 20_000),
@@ -93,7 +92,6 @@ export function apply(ctx, config) {
     session: settings.session,
     command: settings.command,
     nodePath: settings.nodePath,
-    cdpPort: settings.cdpPort,
     autoAttach: settings.autoAttach,
     timeoutMs: settings.timeoutMs,
     requestTimeoutMs: settings.requestTimeoutMs,

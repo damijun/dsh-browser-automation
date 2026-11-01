@@ -10,11 +10,10 @@
         # playwright-cli session name (`-s=`). One session is shared by every
         # DSH session; page markers, not the CLI session, separate them.
         session: dsh
-        # CDP port DSH Desktop was started with. It must match the
-        # --remote-debugging-port launch argument; Electron binds loopback only, so
-        # there is no host to configure. Changing it here does NOT move the port DSH
-        # listens on - edit the shortcut or launch script for that.
-        cdpPort: 9222
+        # There is deliberately no port setting: the port is whatever DSH Desktop was
+        # started with (--remote-debugging-port=0 for a fresh one per launch, or a fixed
+        # number), and the plugin reads it from DevToolsActivePort in the app's
+        # user-data directory. Changing a setting here could not move that port.
         # Attach at startup so sidebar pages opened afterwards are visible to the CLI.
         # Costs one daemon process while DSH runs; only one DSH instance at a time.
         autoAttach: true
