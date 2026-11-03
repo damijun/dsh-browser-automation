@@ -229,6 +229,15 @@ test('the tool set covers the documented capability list', () => {
   ]);
 });
 
+test('no tool opens the status panel: the user opens it from the sidebar', () => {
+  const status = createTools(stubRuntime).find((tool) => tool.name === 'browser_status');
+  assert.deepEqual(status.parameters.properties.action.enum, ['status', 'attach', 'detach']);
+  // The panel is a session-scoped tab the user opens from the guide card; a
+  // bridge command for it would land in whichever conversation is on screen.
+  assert.doesNotMatch(read('../src/runtime.js'), /openPanel/);
+  assert.doesNotMatch(read('../client.js'), /open-panel/);
+});
+
 test('no tool exposes a tab index or relies on tab-new/targetId', () => {
   const source = read('../src/tools.js') + read('../src/driver.js') + read('../src/runtime.js');
   assert.ok(!/tab-new/.test(source.replace(/[^\n]*tab-new[^\n]*\btab-new\b/g, (match) => match)));

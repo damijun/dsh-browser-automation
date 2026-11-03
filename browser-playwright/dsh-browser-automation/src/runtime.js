@@ -606,25 +606,6 @@ export class Runtime {
   }
 
   /**
-   * Open the status panel tab in the right sidebar.
-   *
-   * The panel is the user-facing view of what these tools are doing; it is opened
-   * on request rather than always, so it never competes with the browser tabs the
-   * user is working in. Like every other UI action it needs the page half.
-   */
-  async openPanel() {
-    requireBridge(this.bridge, 'browser_status');
-    const result = await this.bridge.request('open-panel', {}, { timeoutMs: 8_000 });
-    if (!result || result.opened !== true) {
-      throw new Error(
-        'The DSH page did not open the status panel. Check the right sidebar, then retry; ' +
-          'browser_status without an action still reports the same facts.',
-      );
-    }
-    return result;
-  }
-
-  /**
    * Close one sidebar browser tab.
    *
    * This is a UI action, not a CLI one: `playwright-cli tab-close` only destroys the

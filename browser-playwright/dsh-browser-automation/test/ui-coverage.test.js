@@ -47,6 +47,16 @@ test('the panel actually renders the startup attach line', () => {
   assert.match(source, /'panel\.autoAttach'/);
 });
 
+test('the panel counts and lists only the pages this session controls', () => {
+  // `status.pages` is the plugin's global tab list (the same snapshot
+  // `browser_status` returns), so an unfiltered render made the panel show every
+  // other session's pages under "Pages in this session" — and count them.
+  assert.match(
+    source,
+    /const pages = \(\(data && data\.pages\) \|\| \[\]\)\.filter\(\(page\) => page && page\.pageId && page\.mine === true\)/,
+  );
+});
+
 test('reset is a button and the overridden marker is plain text', () => {
   // The row used to render both as links: the reset read as a label and the badge as
   // a control. The requirement is the other way round.

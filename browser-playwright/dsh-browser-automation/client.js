@@ -595,7 +595,12 @@ window.__ModuleLoader__.load({
         const bridge = (data && data.bridge) || {};
         const resolved = data && data.cli ? data.cli.resolved : null;
         const modes = (data && data.modes) || { open: false, claim: false };
-        const pages = ((data && data.pages) || []).filter((page) => page && page.pageId);
+        // `status.pages` is the plugin's whole tab list — the same snapshot
+        // `browser_status` returns to the agent, which deliberately includes every
+        // session's pages. This panel is scoped to one session's sidebar seat, so a
+        // row that is not ours would otherwise be counted and listed as if it were;
+        // `mine` is the Host's answer to exactly that question.
+        const pages = ((data && data.pages) || []).filter((page) => page && page.pageId && page.mine === true);
         const busy = Boolean(state.busy);
 
         return h('div', { className: 'dshba' }, [
@@ -1545,15 +1550,6 @@ window.__ModuleLoader__.load({
         if (command.kind === 'close-page') {
           const value = await closePage(String(command.pageId ?? ''), String(command.sessionId ?? ''));
           await call('result', { requestId: command.requestId, ok: true, value });
-          return;
-        }
-        if (command.kind === 'open-panel') {
-          // Opening the panel is the same navigation every other entry point uses:
-          // a page type is opened by kind, and DSH dedupes it within the pane.
-          const service = sidebar();
-          if (!service) throw new Error('the sidebar-right client service is not available in this page');
-          service.openTab(PANEL_KIND);
-          await call('result', { requestId: command.requestId, ok: true, value: { opened: true, kind: PANEL_KIND } });
           return;
         }
         await call('result', {

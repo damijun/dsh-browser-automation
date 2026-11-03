@@ -77,7 +77,7 @@ playwright-cli 默认假定已全局安装（`npm install -g @playwright/cli@lat
 | `browser_reload {pageId}` | 重新加载该页 —— 实现为 **`goto` 同一个 URL**，同样先切到前台。**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面（无论当前选中哪个 tab），侧边栏页面全丢 |
 | `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。历史导航 `page.goBack()` / `page.goForward()` 同样在这里用，不做单独工具 |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
-| `browser_status {action}` | `status` / `attach` / `detach` / `panel`；连接出问题先看它，`panel` 打开状态面板 |
+| `browser_status {action}` | `status` / `attach` / `detach`；连接出问题先看它。状态面板由用户自己从侧栏打开，工具不代开 |
 
 **少开一个 tab 的判据**：侧栏同一时刻只显示一个 tab，每个 tab 都是一张活页面，用户还得自己关。
 所以"要去另一个地址"本身**不是**开新 tab 的理由——只要当前这页的状态不重要，`browser_goto` 就是更便宜的做法：
@@ -98,15 +98,17 @@ playwright-cli 默认假定已全局安装（`npm install -g @playwright/cli@lat
 re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会先问页面半边：
 它报告当前可见 `<webview>` 的 URL（隐藏的载体 box 尺寸为 0，被跳过），再用这个 URL 去 `tab-list` 里匹配。
 
-### 状态面板（`browser_status action=panel`）
+### 状态面板（侧栏「浏览器自动化」）
 
 给**人**看的一面：只读，除两个全局动作（断开 / 重新连接）外不提供任何操作。
-它在右侧边栏开一个**会话级**标签页（`browser-automation` 类型），显示：
+它是右侧边栏里一个**会话级**标签页（`browser-automation` 类型），由用户从侧栏起始页的引导卡片
+自己打开——插件不替用户开面板（`browser_status` 也没有 `panel` 动作）。它显示：
 
 - 连接：CDP 是否附着、桥的 `state` 与客户端数、挂起轮询数、`bridgeError`
 - CLI 解释器：实际用的 node（文件名）、命令、`-s=` 会话名
 - 启动模式：`新开标签页` / `接管可见页` 当前是否可用
-- 本会话的页面：`pageId`、来源（`open` / `claim`）、标题、URL、是否 current
+- 本会话的页面：`pageId`、来源（`open` / `claim`）、标题、URL、是否 current；
+  `browser_status.pages` 是全局列表（还带别的会话的页），面板只取 `mine` 为真的行
 - 两个按钮：`断开 CLI`（= `detach`，提示里写明会让已有 `pageId` 失效）、`重新连接`
 
 为什么是会话级标签页而不是左栏的全局页面：全局页面会替换主栏的对话，而侧边栏浏览器的挂载点依赖
@@ -596,7 +598,7 @@ node --test
 - **配置卡片首帧**：用 harness 的 React stub 直接渲染一次 —— 卡片在首帧抛错会让整个插件页白屏，而且不报错；
 - **状态面板的三次注册**：tab 类型（`id` + `kind`）、body（`sidebar.right.pane.tab` + 用类型 `id` 作 key）、
   locale 文案，缺任何一个的表现都是"用户看到一个没有内容的标签页"而且不报错；外加 `guide` 条目
-  （`id`/`title`/`icon`）—— 没有它，面板只能靠 chip 或工具调用才找得到，右侧"开始"页里不会出现；
+  （`id`/`title`/`icon`）—— 没有它，面板只能靠已有的 chip 才找得到，右侧"开始"页里不会出现；
 - 工具定义（自实现一遍 `assertSupportedJsonSchema` 子集，避免"装上才发现 schema 非法"）、渲染器、命名、无 `index`/`tab-new`/`targetId`；
   以及"运行时加的字段必须在 output schema 里声明"（这条抓到过两次真 bug）；
 - CliBridge（shim → JS 入口解析、**Electron 里必须换用 PATH 的 node**、argv 不被引号破坏、非零退出、超时、取消、失败信息去掉 Node 栈）；

@@ -618,16 +618,15 @@ export function createTools(runtime) {
     {
       name: 'browser_status',
       description:
-        'Report the connection between this plugin, playwright-cli and the DSH page, and (optionally) attach, detach or open the panel. ' +
+        'Report the connection between this plugin, playwright-cli and the DSH page, and (optionally) attach or detach. ' +
         'Call it when a browser_* tool reports a connection problem. ' +
-        'action="panel" opens the read-only status panel as a right-sidebar tab (for the user, not for you). ' +
         'action="detach" releases playwright-cli without closing DSH; that is the way to end an automation run.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          action: string('status (default), attach, detach or panel.', {
-            enum: ['status', 'attach', 'detach', 'panel'],
+          action: string('status (default), attach or detach.', {
+            enum: ['status', 'attach', 'detach'],
           }),
         },
       },
@@ -714,20 +713,12 @@ export function createTools(runtime) {
       },
       async execute(args, exec) {
         const sessionId = requireSession(exec);
-        const requested = args.action ?? 'status';
-        if (requested === 'panel') await runtime.openPanel();
         const snapshot = await runtime.status({
           sessionId,
-          action: requested === 'panel' ? 'status' : requested,
+          action: args.action ?? 'status',
           signal: exec.signal,
         });
-        if (requested !== 'panel') return sanitize(snapshot);
-        // Keep any note status produced (e.g. an attach failure) and add our own.
-        return sanitize({
-          ...snapshot,
-          action: 'panel',
-          note: snapshot.note ?? 'Opened the status panel in the right sidebar.',
-        });
+        return sanitize(snapshot);
       },
     },
   ];
