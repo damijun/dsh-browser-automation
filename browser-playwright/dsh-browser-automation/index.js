@@ -367,6 +367,15 @@ async function serve({ request, response, runtime, bridge, settings, log, config
         reply(response, 200, { ok: true, value: bridge.submitResult(body) });
         return;
       }
+      case 'shared-state': {
+        // The overlay badge asks whether the visible sidebar tab is one this Host
+        // controls. It cannot read the page's in-page identity, and titles no longer
+        // carry one, so this is a memory lookup here.
+        const tabId = String(body.tabId ?? '');
+        const url = String(body.url ?? '');
+        reply(response, 200, { ok: true, value: runtime.sharedTab({ tabId, url }) });
+        return;
+      }
       case 'status': {
         // The panel tab reads this. It is the same snapshot browser_status returns,
         // so the UI never has to re-derive plugin state on its own.

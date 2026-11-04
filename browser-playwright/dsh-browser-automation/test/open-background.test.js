@@ -30,7 +30,7 @@ function runtimeWith({ opened, tabsAfter = [], calls }) {
     },
   };
   runtime.attach = async () => ({ tabs: [APP_TAB] });
-  runtime.injectMarker = async (tab) => ({ title: `Opened [${tab.pageId}]`, url: 'https://a.test/' });
+  runtime.injectMarker = async () => ({ title: 'Opened', url: 'https://a.test/' });
   runtime.driver = {
     cli: runtime.cli,
     attached: true,

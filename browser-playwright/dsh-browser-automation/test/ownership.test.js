@@ -118,9 +118,15 @@ test('a background conversation cannot claim the page in view', async () => {
 test('the mounted conversation can still claim the page in view', async () => {
   const runtime = new Runtime({ config: {} });
   runtime.cli = { workdir: () => '.', run: async () => ({ stdout: '""', stderr: '', code: 0 }) };
-  const tab = { index: 1, current: true, title: 'A page [dshpg-111111-22222222]', url: 'https://a.test/', text: '' };
+  const tab = { index: 1, current: true, title: 'A page', url: 'https://a.test/', text: '' };
   runtime.attach = async () => ({ tabs: [tab] });
-  runtime.driver = { cli: runtime.cli, attached: true };
+  runtime.driver = {
+    cli: runtime.cli,
+    attached: true,
+    catalog: async () => [
+      { index: 1, current: true, closed: false, pageId: null, title: 'A page', url: 'https://a.test/' },
+    ],
+  };
   runtime.bridge = {
     hasClient: () => true,
     clientState: () => 'live',
@@ -129,7 +135,7 @@ test('the mounted conversation can still claim the page in view', async () => {
         ? { mounted: SESSION, visibleUrl: 'https://a.test/', activeTabId: 'tab1', hasSidebarRight: true }
         : {},
   };
-  runtime.injectMarker = async (target) => ({ title: 'A page [' + target.pageId + ']', url: target.url });
+  runtime.injectMarker = async (target) => ({ title: 'A page', url: target.url });
 
   const claimed = await runtime.claimPage({ sessionId: SESSION });
   assert.match(claimed.pageId, /^dshpg-[0-9a-f]{6}-[0-9a-f]{8}$/);

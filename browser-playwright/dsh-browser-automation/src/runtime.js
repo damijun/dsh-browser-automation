@@ -3,9 +3,8 @@ import path from 'node:path';
 import { resolveCdpTarget } from './cdp-target.js';
 import { CliBridge } from './cli.js';
 import { PageDriver } from './driver.js';
-import { newPageId, sessionTag, extractPageIds } from './page-id.js';
+import { newPageId, sessionTag } from './page-id.js';
 import { SessionManager, discover } from './sessions.js';
-import { resolveIndex } from './tab-list.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -158,9 +157,6 @@ export class Runtime {
       log: this.log,
     });
     this.driver = new PageDriver(this.cli, {
-      // Never paint into the page: the visual marker is the overlay badge the client half
-      // draws above the sidebar (shell.overlay), the title token stays as the join key.
-      marker: { badge: false },
       // Set for real by resolveCdp() before any attach: the port is not knowable
       // before Chromium's record is read.
       cdpUrl: undefined,
@@ -436,7 +432,7 @@ export class Runtime {
   }
 
   /**
-   * Install (or replace) the marker on one tab: an init script so every later
+   * Install (or replace) the page identity on one tab: an init script so every later
    * navigation re-applies it, plus one eval for the document already loaded.
    *
    * @param {{ index: number, title?: string, url?: string, current?: boolean, pageId: string }} tab
@@ -445,8 +441,8 @@ export class Runtime {
     const driver = this.ensureDriver();
     const marked = await driver.installMarker(tab).catch(async (error) => {
       // A page that refuses init scripts (CSP or a non-document target) still gets
-      // the one-shot marker, which is better than failing the whole open.
-      this.log(`init script failed (${error.message}); falling back to a one-shot marker`);
+      // the one-shot identity, which is better than failing the whole open.
+      this.log(`init script failed (${error.message}); falling back to a one-shot identity`);
       return driver.mark(tab);
     });
     const title = typeof marked?.title === 'string' ? marked.title : undefined;
@@ -471,26 +467,36 @@ export class Runtime {
     requireBridge(this.bridge, 'browser_claim');
     const listing = await this.attach(request.signal);
     const target = await this.requireVisibleTab(listing.tabs, request.sessionId);
-    const previousIds = extractPageIds(target.title);
+    // Replace whatever identity the page already carries, so the previous owner's
+    // handle stops resolving. The catalog is read before the identity is installed;
+    // the entry is matched by index first and by URL as a fallback.
+    const catalog = await driver.catalog();
+    const previous =
+      catalog.find(
+        (entry) =>
+          !entry.closed && entry.index === target.index && samePage(entry.url ?? '', target.url),
+      ) ?? catalog.find((entry) => !entry.closed && samePage(entry.url ?? '', target.url));
+    const previousPageId = previous?.pageId ?? null;
     const pageId = newPageId(request.sessionId, new Set(this.manager.all().map((page) => page.pageId)));
-    const originalTitle = target.title.replace(/\s*\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/g, '').trim();
     // Selecting happens inside installMarker (under the driver's CLI lock), for the
     // same reason as browser_open.
     const marked = await this.injectMarker({ ...target, pageId });
-    for (const previous of previousIds) this.manager.unregister(previous);
+    if (previousPageId) this.manager.unregister(previousPageId);
+    const title = marked.title ?? target.title;
+    const url = marked.url ?? target.url;
     this.manager.register({
       pageId,
       sessionId: request.sessionId,
-      url: target.url,
-      title: originalTitle,
+      url,
+      title,
       source: 'claim',
       tabId: target.tabId ?? null,
     });
     return {
       pageId,
-      title: originalTitle,
-      url: target.url,
-      replacedExistingPageId: previousIds[0],
+      title,
+      url,
+      replacedExistingPageId: previousPageId ?? undefined,
     };
   }
 
@@ -564,17 +570,19 @@ export class Runtime {
    */
   async listPages(request) {
     const driver = this.ensureDriver();
-    let tabs = [];
+    let pages = [];
     let warning;
     try {
-      const listing = await this.attach();
-      tabs = listing.tabs;
+      await this.attach();
+      // The catalog reads each page's in-page identity; tab-list alone carries no
+      // pageId any more.
+      pages = await driver.catalog();
     } catch (error) {
       warning = error.message;
-      tabs = [];
+      pages = [];
     }
     const rows = discover({
-      tabs,
+      pages,
       manager: this.manager,
       sessionId: request.sessionId,
       includeUnclaimed: request.scope === 'all',
@@ -583,9 +591,10 @@ export class Runtime {
     // A sidebar page the user opened before this automation session is invisible to the
     // CLI even though Electron exposes it over CDP, so an empty list next to a visibly
     // open page is this limitation, not an empty sidebar.
-    if (!warning && tabs.every((tab) => !/^https?:/i.test(tab.url))) {
+    const live = pages.filter((page) => !page.closed);
+    if (!warning && live.every((page) => !/^https?:/i.test(page.url ?? ''))) {
       const visible = await this.visiblePageUrl();
-      if (visible) warning = stalePageWarning(visible, tabs.length);
+      if (visible) warning = stalePageWarning(visible, live.length);
     }
     return { count: filtered.length, pages: filtered, warning };
   }
@@ -606,6 +615,58 @@ export class Runtime {
   }
 
   /**
+   * What the page half needs to locate one page in the sidebar: the stored tab id,
+   * plus the URL when the registry has no record (a page discovered after a Host
+   * reload). No attach is performed; with the CLI detached the caller still gets
+   * the registry values and the page half reports that it cannot match the tab.
+   *
+   * @param {string} pageId
+   * @returns {Promise<{ tabId: string | null, url: string | null }>}
+   */
+  async locateTab(pageId) {
+    const record = this.manager.get(pageId);
+    let url = record?.url ?? null;
+    if (!url) {
+      const driver = this.ensureDriver();
+      if (driver.attached) {
+        try {
+          const entry = (await driver.catalog()).find((page) => !page.closed && page.pageId === pageId);
+          url = entry?.url ?? null;
+        } catch (error) {
+          this.log(`could not look up ${pageId}: ${error.message}`);
+        }
+      }
+    }
+    return { tabId: record?.tabId ?? null, url };
+  }
+
+  /**
+   * Whether a sidebar tab is controlled by this Host, for the overlay badge.
+   *
+   * The badge lives in the DSH page and cannot read the in-page identity, so it
+   * asks here instead of parsing a title. The tab id is exact. The URL fallback
+   * only answers for a record with no known tab id (a page discovered after a
+   * Host reload), so two tabs showing the same URL cannot borrow each other's
+   * badge.
+   *
+   * @param {{ tabId?: string, url?: string }} [request]
+   * @returns {{ shared: boolean, pageId: string | null }}
+   */
+  sharedTab(request = {}) {
+    const tabId = typeof request.tabId === 'string' && request.tabId !== '' ? request.tabId : null;
+    const url = typeof request.url === 'string' && request.url !== '' ? request.url : null;
+    if (tabId) {
+      const exact = this.manager.all().find((page) => page.tabId === tabId);
+      if (exact) return { shared: true, pageId: exact.pageId };
+    }
+    if (url) {
+      const byUrl = this.manager.all().find((page) => !page.tabId && page.url === url);
+      if (byUrl) return { shared: true, pageId: byUrl.pageId };
+    }
+    return { shared: false, pageId: null };
+  }
+
+  /**
    * Close one sidebar browser tab.
    *
    * This is a UI action, not a CLI one: `playwright-cli tab-close` only destroys the
@@ -622,9 +683,15 @@ export class Runtime {
     // caller (a registered page, or at least a handle carrying that session's tag — which
     // is how a tab left over from an earlier run can still be cleaned up).
     requireOwnership(this.manager, pageId, request.sessionId);
+    const located = await this.locateTab(pageId);
     const result = await this.bridge.request(
       'close-page',
-      { pageId, sessionId: request.sessionId },
+      {
+        pageId,
+        sessionId: request.sessionId,
+        tabId: located.tabId,
+        url: located.url,
+      },
       { timeoutMs: 8_000 },
     );
     if (!result || result.closed !== true) {
@@ -718,8 +785,17 @@ export class Runtime {
 
     let plan = { visible: null, tabId: null, expanded: null, expandedNow: false };
     if (this.bridge?.hasClient()) {
+      const located = await this.locateTab(request.pageId);
       plan = await this.bridge
-        .request('prepare-capture', { pageId: request.pageId }, { timeoutMs: 6_000 })
+        .request(
+          'prepare-capture',
+          {
+            pageId: request.pageId,
+            tabId: located.tabId,
+            url: located.url,
+          },
+          { timeoutMs: 6_000 },
+        )
         .catch((error) => {
           this.log(`prepare-capture failed, capturing as-is: ${error.message}`);
           return plan;
@@ -812,7 +888,12 @@ export class Runtime {
    */
   async reveal(pageId) {
     try {
-      await this.bridge?.request('prepare-capture', { pageId }, { timeoutMs: 6_000 });
+      const located = await this.locateTab(pageId);
+      await this.bridge?.request(
+        'prepare-capture',
+        { pageId, tabId: located.tabId, url: located.url },
+        { timeoutMs: 6_000 },
+      );
     } catch (error) {
       this.log(`could not reveal ${pageId}: ${error.message}`);
     }
@@ -913,7 +994,7 @@ export class Runtime {
     return this.onPage(
       request.pageId,
       // driver.runCode answers with { output, title, url }: `title`/`url` are the
-      // post-run marker read-back, used to keep the registry honest when a snippet
+      // post-run identity read-back, used to keep the registry honest when a snippet
       // navigates. Only `output` crosses to the tool, whose schema says `output: string`
       // — wrapping the whole object here made every call fail validation *after* the
       // snippet had already run (a retry would repeat its side effects).
@@ -1001,11 +1082,14 @@ export class Runtime {
       return finish();
     }
     try {
-      const listing = await this.attach(request.signal);
+      await this.attach(request.signal);
       base.attached = true;
-      base.currentIndex = listing.tabs.find((tab) => tab.current)?.index ?? -1;
+      // `pages` comes from the page catalog, which reads the in-page identity of
+      // every page; the raw tab list only has titles and cannot name a page.
+      const catalog = await driver.catalog();
+      base.currentIndex = catalog.find((page) => page.current)?.index ?? -1;
       base.pages = discover({
-        tabs: listing.tabs,
+        pages: catalog,
         manager: this.manager,
         sessionId: request.sessionId,
         includeUnclaimed: true,
@@ -1150,8 +1234,8 @@ export function localFileHint(rawUrl) {
  * point of the tool.
  *
  * This is the second line of defence, not the first: the application page has no
- * `pageId` at all (markers are only installed on opened or claimed pages), so it
- * cannot be addressed. This guard covers a marker that somehow leaked onto an
+ * `pageId` at all (identities are only installed on opened or claimed pages), so it
+ * cannot be addressed. This guard covers an identity that somehow leaked onto an
  * application-scheme tab.
  *
  * @param {{ url?: string, title?: string }} tab
@@ -1175,7 +1259,7 @@ export function refuseApplicationTab(tab, tool = 'this tool') {
  * sessions would mutate a page the user is working in from a conversation they are not
  * looking at (and `browser_list scope=all` deliberately shows those pages, which made
  * that mistake easy). `browser_claim` — not a page action — is the sanctioned way to
- * take a page over: it replaces the marker and registers it under the caller.
+ * take a page over: it replaces the identity and registers it under the caller.
  *
  * Ownership comes from the registry when the page is registered there; otherwise from
  * the 24-bit session tag embedded in the handle, so a page whose registry entry was lost
@@ -1240,7 +1324,7 @@ export function requireBridge(bridge, tool) {
   );
 }
 
-export { sessionTag, resolveIndex };
+export { sessionTag };
 
 
 

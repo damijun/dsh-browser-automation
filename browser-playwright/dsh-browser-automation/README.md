@@ -24,7 +24,7 @@
 
 三条不变量：
 
-1. **索引是易失的中间产物，`pageId` 是稳定契约。** 每个工具调用都重新 `tab-list` 解析索引，绝不缓存。
+1. **索引是易失的中间产物，`pageId` 是稳定契约。** 每个工具调用都重新读页面目录（一次 `run-code`）解析索引，绝不缓存。
 2. **开页必须走 DSH 自己的 UI。** Electron 的 CDP 不支持 `Target.createTarget`，所以 `tab-new` 不能用；
    playwright-cli 也没有 `targetId` 参数。`browser_open` 由页面半边调用 `ctx.sidebarRight.openTab` 完成。
 3. **收尾只 `detach`，绝不 `close`。** `browser_close` 只关一个标签页，不碰 DSH 进程。
@@ -64,8 +64,8 @@ playwright-cli 默认假定已全局安装（`npm install -g @playwright/cli@lat
 
 | 工具 | 作用 |
 |---|---|
-| `browser_open {url}` | 通过 DSH UI **新建**侧边栏标签页 → 注入标记 → 返回 `pageId`。只在真的需要多一个 tab 时用（见下方"少开 tab"）。桥不可用即报错，**不会**复用现有标签页。**后台会话**走内部的 `openTabIn`，结果带 `background: true`（不聚焦、不可截图），见 §7.3 |
-| `browser_claim` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回注入前的标题；替换旧标记，换新 `pageId`。无参数 |
+| `browser_open {url}` | 通过 DSH UI **新建**侧边栏标签页 → 安装页面身份 → 返回 `pageId`。只在真的需要多一个 tab 时用（见下方"少开 tab"）。桥不可用即报错，**不会**复用现有标签页。**后台会话**走内部的 `openTabIn`，结果带 `background: true`（不聚焦、不可截图），见 §7.3 |
+| `browser_claim` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回该页自己的标题；从页面目录读出旧身份并换成新 `pageId`。无参数 |
 | `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页），带实时索引。**开页前先看这里** |
 | `browser_close {pageId}` | **移除 DSH 侧边栏标签页本身**（`ctx.sidebarRight.close(tabId)`）并注销登记；不是 CLI 的 `tab-close`。用完的页顺手关掉 |
 | `browser_snapshot {pageId, depth?}` | 可访问性快照（含 `[ref=…]`），内容原样返回，不做二次压缩 |
@@ -73,15 +73,15 @@ playwright-cli 默认假定已全局安装（`npm install -g @playwright/cli@lat
 | `browser_click {pageId, ref, button?, double?, modifiers?}` | 点击 |
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
-| `browser_goto {pageId, url}` | 让该 tab 进入这个 URL（**换地址的默认方式**：不新增 tab、`pageId` 不变）；**先把 tab 切到前台**，用户能看见；标记由 init script 自动续上并复核 |
+| `browser_goto {pageId, url}` | 让该 tab 进入这个 URL（**换地址的默认方式**：不新增 tab、`pageId` 不变）；**先把 tab 切到前台**，用户能看见；身份由 init script 自动续上并复核 |
 | `browser_reload {pageId}` | 重新加载该页 —— 实现为 **`goto` 同一个 URL**，同样先切到前台。**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面（无论当前选中哪个 tab），侧边栏页面全丢 |
-| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次标记（`setContent` 会抹掉它），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。历史导航 `page.goBack()` / `page.goForward()` 同样在这里用，不做单独工具 |
+| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次身份（snippet 可能导航或替换文档），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。历史导航 `page.goBack()` / `page.goForward()` 同样在这里用，不做单独工具 |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
 | `browser_status {action}` | `status` / `attach` / `detach`；连接出问题先看它。状态面板由用户自己从侧栏打开，工具不代开 |
 
 **少开一个 tab 的判据**：侧栏同一时刻只显示一个 tab，每个 tab 都是一张活页面，用户还得自己关。
 所以"要去另一个地址"本身**不是**开新 tab 的理由——只要当前这页的状态不重要，`browser_goto` 就是更便宜的做法：
-不新增 tab、`pageId` 不变、标记自动续上。只有下面这些情况才用 `browser_open`：
+不新增 tab、`pageId` 不变、身份自动续上。只有下面这些情况才用 `browser_open`：
 
 - 两页要**同时存在**（对照、反复来回、跨页取信息）；
 - 当前页的状态（登录、表单、滚动位置、进行中的操作）**不能丢**；
@@ -92,11 +92,12 @@ playwright-cli 默认假定已全局安装（`npm install -g @playwright/cli@lat
 **可见性约定**：`browser_goto`、`browser_reload`、`browser_click`、`browser_fill`、`browser_press` 都会**先把目标 tab 切到前台**（必要时展开收起的侧边栏）再执行，这样用户能看到插件在做什么。聚焦是尽力而为：定位不到 tab 时操作照常进行，失败时报真实原因。
 
 **副作用（工具描述里已声明）**：每个操作都会 `tab-select`，即改变 playwright-cli 的 current tab，并把它停在目标页上。
-`browser_claim` 会替换页面标记，原来那个 `pageId` 立即失效。
+`browser_claim` 会替换页面身份，原来那个 `pageId` 立即失效。
 
 **`browser_claim` 找的是"用户眼前那一页"**，不是 playwright 的 current tab —— 后者是 CLI 自己的记账，
 re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会先问页面半边：
-它报告当前可见 `<webview>` 的 URL（隐藏的载体 box 尺寸为 0，被跳过），再用这个 URL 去 `tab-list` 里匹配。
+它报告当前可见 `<webview>` 的 URL（隐藏的载体 box 尺寸为 0，被跳过），再用这个 URL 去 `tab-list` 里匹配；
+匹配到之后从页面目录读出这一页原来的身份，注销它并安装新身份。
 
 ### 状态面板（侧栏「浏览器自动化」）
 
@@ -143,13 +144,13 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 | `modes.open` | 桥 `live` —— `ctx.sidebarRight.openTab` 能被执行 |
 | `modes.claim` | 桥 `live` **且** `visibleUrl` 非空（为此外发一次 `ping`，几毫秒）。真正的 claim 还会复核侧边栏是否收起、URL 能否在 tab-list 里匹配 |
 | `pages[]` | **唯一的标签页列表**：每个 CDP target 一行，含 `pageId`/`session`/`mine`/`source`。已不再单独返回原始 `tabs`（它是 `pages` 的子集） |
-| `pages[].pageId` | 标题里标记解析出的稳定句柄；没有标记时 `null` |
-| `pages[].session` | 归属的 DSH 会话；`dsh-app://…` 标成 `application`，有标记但未登记标成 `session-tag:<tag>` |
-| `pages[].mine` | 是否属于**调用这个工具的会话**（只有带标记的行才有） |
-| `pages[].source` | `open` / `claim` / `discovered`（标记是我的但登记表没记录，通常是重新加载后） |
+| `pages[].pageId` | 页面内部字段里的稳定句柄；页面没有安装身份时 `null` |
+| `pages[].session` | 归属的 DSH 会话；`dsh-app://…` 标成 `application`，有身份但未登记标成 `session-tag:<tag>` |
+| `pages[].mine` | 是否属于**调用这个工具的会话**（只有带页面身份的行才有） |
+| `pages[].source` | `open` / `claim` / `discovered`（页面的会话摘要属于本会话、但登记表没记录，通常是 Host 重新加载后） |
 | `bridgeError` | 桥路由挂载失败时才有值（端口冲突等），正常 `null` |
 
-`pages` 与"原始 tab-list"的关系：`tabs[].index` 是唯一能喂给 `tab-select` 的寻址方式，`pages` 原样保留了 `index`/`current`/`title`/`url`，所以不再重复输出一份。
+`pages` 与"原始 tab-list"的关系：`tabs[].index` 是唯一能喂给 `tab-select` 的寻址方式，`pages` 原样保留了 `index`/`current`/`title`/`url`，所以不再重复输出一份。`pages` 的行来自页面目录（逐页读取页面内部字段），不是从 `tab-list` 的标题里解析的。
 
 ---
 
@@ -172,7 +173,7 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 - 读元素：`return await page.locator('a').allTextContents()`
 - 要结构化返回就自己 `JSON.stringify`（返回的是字符串，原样回传）
 
-代价：`run_code` 每次多一次 CLI 调用（跑完补标记），只读操作也一样。
+代价：`run_code` 每次多一次 CLI 调用（跑完补身份），只读操作也一样。
 
 ### 工具结果里没有 tab index
 
@@ -183,7 +184,7 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 
 ---
 
-## 4. pageId 与标记机制
+## 4. pageId 与页面身份
 
 ```
 pageId = dshpg-<sha256(sessionId) 前 6 位>-<8 位随机>
@@ -192,30 +193,18 @@ pageId = dshpg-<sha256(sessionId) 前 6 位>-<8 位随机>
 打开/接管时，插件做两件事：
 
 1. **装一个 init script**（`page.addInitScript`，走 `run-code`）：每次新文档加载都会先跑一遍，
-   把 `[dshpg-…]` 追加到 `document.title`。这是标记能在**跨域导航后存活**的原因 ——
-   普通注入在导航时随页面一起被销毁，点一个链接标记就没了。实测 `addInitScript` 跨 CLI 调用、
-   跨导航、跨 origin 都保留。
+   把身份写到页面自己的 `window` 上：
+
+   ```js
+   window.__dshBrowserAutomation = { pageId }
+   ```
+
+   这是身份能在**跨域导航后存活**的原因 —— 普通注入在导航时随页面一起被销毁，点一个链接就没了。
+   实测 `addInitScript` 跨 CLI 调用、跨导航、跨 origin 都保留。
 2. **对当前文档立刻应用一次**（`eval` 同一段脚本）：init script 只对"下一次"加载生效。
 
-同一段脚本里还做两件事：
-
-- 先剥掉旧标记（claim 接管别的会话的页时不会留下两个标记）；
-- 装 `MutationObserver` 监听 `<head>`，页面自己改标题（B 站、SPA 路由、未读角标）后**自动补回**，
-  带 60ms 防抖，`title.includes(id)` 保证幂等、不会累积方括号；文档还没有 `<title>` 时用
-  `setInterval` 追 4 秒。
-
-于是 `playwright-cli tab-list` 的输出里就带着这个标记：
-
-```
-- 0: [dsh 侧边栏浏览器 — DeepSeek Harness](dsh-app://app/)
-- 1: [哔哩哔哩 (゜-゜)つロ 干杯~-bilibili [dshpg-1a2b3c-9f8e7d6c]](https://www.bilibili.com/)
-```
-
-**但从 2026-10-30 起，标记不再是寻址的唯一依据。** 同一段 init script 还把身份写进页面内部：
-
-```js
-window.__dshBrowserAutomation = { pageId, dispose }   // pageId 才是寻址真相
-```
+**页面标题不再携带任何东西**：`document.title`、侧栏标签标题、`playwright-cli tab-list` 输出的
+都是网页自己的标题。没有标题后缀、没有 `MutationObserver`、没有追 `<title>` 的定时器。
 
 ## 4.1 双向映射（一次 `run-code` 各一次）
 
@@ -226,15 +215,13 @@ resolvePageId(tabIndex)   tab-list index -> pageId
 
 两者都基于 `src/page-catalog.js`：**一次** `page.context().pages()`，对每个页面读
 `window.__dshBrowserAutomation.pageId` / `document.title` / `location.href`（每页一次 `evaluate`，
-单页 3 秒超时，单页失败不影响其余页面）。
+单页 3 秒超时，单页失败不影响其余页面）。标题只用来显示，不参与寻址。
 
 - **顺序契约**：`context.pages()[index]` 与 `tab-list` 的 index 一致。本环境（Electron webview、
   5 个 tab、应用页在 0）逐项实测一致；`current` 由 `candidate === page` 推导，不需要额外 CLI 调用。
 - **不缓存**：index 只在本次调用内有效（用户随时可能关标签页）。
 - **首次匹配即返回**（迁移计划 §4.6）：不收集、不产生 `AMBIGUOUS_PAGE`。
-- **标题 marker 是"会报告的兜底"**：页面内身份取不到时（旧版本打开的页、init script 被拒），
-  才会按标题 marker 匹配，并在日志里写明 `using the title marker at index N`；返回值的
-  `addressedBy` 字段是 `'page'` 或 `'title'`，调用方能看见走了哪条路。
+- **唯一身份来源**：页面内字段。没有它就从 `tab-list` 里找不到这一页（不再有"按标题兜底"）。
 - 找不到时 `PAGE_NOT_FOUND` 会**附带当前打开页的清单**（`0: dsh-app://app/ (unmarked); 1: https://… (dshpg-…)`），
   并提示"重开/重新 claim"。
 
@@ -258,7 +245,22 @@ runtime.browser_xxx({ pageId, … })
 - **没有 `withPage`、也没有 `driver.resolve` 别名**：解析只发生在 `resolvePage`，执行只发生在
   `executeOnResolvedTab`，同一页在一次调用里只解析一次。
 - `browser_open` / `browser_claim` 是唯一"先有 pageId 再补 tab"的方向：把 mint 出来的 pageId 合进 tab
-  （`{ ...found, pageId }`）后交给 `installMarker(tab)`，所以标记函数也只收 tab。
+  （`{ ...found, pageId }`）后交给 `installMarker(tab)`，所以身份安装函数也只收 tab。
+
+### 4.2.1 页面标识与侧栏标签的对照
+
+宿主端要页面标识（`pageId`），界面端要侧栏标签编号（`tabId`，例如 `tab7`）。这条对照关系现在这样建立：
+
+- `browser_open` 打开标签页时，界面端把新标签页的 `tabId` 回给宿主端，宿主端记进登记表；
+- `browser_claim` 接管可见页时，宿主端通过 `ping` 拿到界面端的 `activeTabId`，同样记进登记表；
+- 截图、可见操作、关闭标签页时，宿主端把 `tabId`（和网址）随命令传给界面端；
+  界面端按 `[data-sidebar-right-tab="tabN"]` 精确定位，只有登记的标签编号为空（例如宿主端重启后
+  从页面目录里"发现"的页）才退回按网址匹配，网址重复时报错而不是猜；
+- 徽标（“正在与智能体共享”）不再读标题：它把可见标签页的 `tabId`（和网址）发给宿主端一个内存查询
+  `shared-state`，宿主端在登记表里回答“是不是本窗口控制的页”。
+
+**页面身份带会话摘要**，所以**即使插件重启、登记表丢失**，`browser_list` 仍能按页面内部字段把标签页
+归回原会话。登记表只是缓存，页面内部字段才是真相。
 
 ## 4.3 attach 是"先探活"
 
@@ -268,9 +270,6 @@ runtime.browser_xxx({ pageId, … })
 对活着的会话再 attach 一次，**用户已经开着的页面会全部失联**（实测：界面 4 个 tab，`tab-list` 只剩应用页）。
 `force: true` 仍然强制重新 attach（诊断用）。
 
-标记带会话摘要，所以**即使插件重启、登记表丢失**，`browser_list` 仍能按标记把标签页归回原会话。
-登记表只是缓存，标记本身才是真相。
-
 ## 4.4 页面动作只对"本会话的页面"开放
 
 页面动作（`snapshot`/`screenshot`/`click`/`fill`/`press`/`goto`/`reload`/`run_code`/`console`）
@@ -278,7 +277,7 @@ runtime.browser_xxx({ pageId, … })
 
 - 归属来源：登记表里的完整 `sessionId`；登记表没有记录（插件重启）时，用 pageId 里的 6 位会话 tag 比对；
 - `browser_list scope="all"` 仍然**列出**别的会话的页面（诊断用），但列出 ≠ 可操作；
-- 想接管别人的页面，用 `browser_claim`（它会把页面重新标记并登记到当前会话）——这是唯一被认可的途径；
+- 想接管别人的页面，用 `browser_claim`（它会重新安装页面身份并登记到当前会话）——这是唯一被认可的途径；
 - 没有会话上下文的内部调用（诊断脚本）不校验。
 
 ---
@@ -294,7 +293,8 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 - 页面：`fetch(new URL('dsh-browser-automation/bridge/<action>', document.baseURI))`（`client.js`）
 
 端点：`hello`（页面自报能力）、`poll`（长轮询取一条命令，15s 挂起）、`result`（回结果）、
-`focus-tab`（截图前把标签页切到前台）。
+`status`（状态面板读快照）、`shared-state`（徽标查询某个标签页是不是本窗口控制的）、
+`config` / `config-set` / `config-reset`（设置卡片）。
 
 用**文档相对 URL** 是关键：Web 上它解析到应用自己的 origin；Desktop 上 `dsh-app://app/<path>`
 会被转发到 `http://127.0.0.1:<port>/<path>` 并注入 shell 的 cookie —— 页面完全不需要猜 origin，
@@ -371,10 +371,11 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 当**正在看的浏览器页**由本插件控制时，**地址栏右端贴壁**显示一个蓝色的 `● 正在与智能体共享` 胶囊（给「在系统浏览器中打开」按钮留出位置）：
 `pointer-events: none`，**不接收任何点击**，也不遮挡地址栏以外的任何控件。
 
-- **不碰页面**：标记挂在 DSH 界面层的 `shell.overlay`（`id: browser-automation:shared`，order 30），
+- **不碰页面**：徽标挂在 DSH 界面层的 `shell.overlay`（`id: browser-automation:shared`，order 30），
   **页面 DOM 里没有任何节点**——截图截的是页面，所以浮标不会进截图；页面脚本也删不掉它。
-- **判据**：那个可见浏览器 tab 的 `<webview>` 标题里带着本插件的 `[dshpg-…]` token（token 是插件与页面的 join key，
-  出现即表示"这页由本插件掌管"）。没有 token 的页、非浏览器 tab、侧栏收起时都不显示。
+- **判据**：把那个可见浏览器 tab 的 `tabId`（侧栏自己的编号）和网址发给宿主端的内存查询
+  `shared-state`，宿主端在登记表里回答"是不是本窗口控制的页"。标题和页面 DOM 都不参与判断；
+  非浏览器 tab、侧栏收起时都不显示。
 - **为什么不在标签芯片上**（实测结论）：`sidebar.right.pane.tab.title` 是 keyed 插槽，但 key 是**页面类型 id**
   （`@deepseek-ai/dsh-client-ui-sidebar-browser`），同一 priority 注册会被拒绝、只能换 priority 去 shadow；
   而官方芯片的标题来自**浏览器类型自己的 store**（插件读不到），`tab.title` 对浏览器页是空的、chip 挂载时
@@ -389,7 +390,7 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
     切到"从未渲染过的 tab"时 pane 是新建的，由 `MutationObserver`（只看 `[data-sidebar-right-session]` 子树）
     捕获并重新挂载观察者；
   - 拖侧栏/缩放窗口：沿用原来的 `window.resize` 监听；
-  - **安全网**：2 秒一次（只读尺寸与标题），兜住观察者可能漏掉的变化；
+  - **安全网**：2 秒一次（只读尺寸与 tab id），兜住观察者可能漏掉的变化；
   - 旧实现是 250ms 轮询（实测 0.3ms/s ≈ 0.03% 主线程），现在切 tab 不再靠轮询。
 - **关闭方式**：`showSharedBadge: false`（配置卡片里叫"共享页面标记"）。
 
@@ -470,13 +471,14 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
   表现是 `browser_open` 报"连不到页面桥"或 `tab-list` 看不到新页 —— 这不是 bug，是载体不同。
   同一份 `client.js` 在 Web 里仍会挂载并连接桥（它按文档相对 URL 解析），但没有任何页可驱动。
 - **跨窗口多会话**：`ctx.sidebarRight.openTab` 没有 session 参数，永远作用于"当前屏幕上的会话"。
-  同一个窗口里的多个 DSH 会话没问题（靠标记区分，已实测）；两个 DSH 窗口各自开页时，桥只能打开请求时在屏的那个会话的标签页。
+  同一个窗口里的多个 DSH 会话没问题（靠页面身份里的会话摘要区分，已实测）；两个 DSH 窗口各自开页时，桥只能打开请求时在屏的那个会话的标签页。
 - **`browser_screenshot` 只返回路径**，不内联图片字节（工具返回值必须是 lossless JSON；内联图片需要 attachments 服务）。
 - **截图会把目标标签页切到前台**。Chromium 只给"被布局且在视口里"的 widget 出帧，而没被选中的侧边栏标签页
   所在的 cell 是 `display:none`（0×0），侧边栏收起时整列还被平移到视口外（实测 x=959、窗口宽 958）。
   所以 `browser_screenshot` 分两条路：
   - 目标页已经可见 → 直接用 `playwright-cli screenshot`（快，无副作用）；
-  - 否则 → 页面侧按 chip 文本找到 `tabId` → 需要时先展开侧边栏 → `focus(tabId)` → 等 `screenshotSettleMs`（默认 1.2s）
+  - 否则 → 页面侧先用登记表里的 `tabId` 找容器（没有登记时才按网址兜底，网址重复就报错）
+    → 需要时先展开侧边栏 → `focus(tabId)` → 等 `screenshotSettleMs`（默认 1.2s）
     让首帧出来 → 用 Playwright API `page.screenshot({ timeout: 25000 })` 落盘。**截完不切回**，侧边栏停在被截的那页。
   图片尺寸 = 该标签页在侧边栏里的实际尺寸（例如 430×915），不是固定视口。
   只是读内容时用 `browser_snapshot`，它不依赖合成，永远可用。
@@ -484,7 +486,7 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
   DSH 侧边栏的标签页会留下来变成空壳（显示"页面加载失败；请刷新重试或在系统浏览器中打开。"），
   而且仍然保持聚焦。只有 `ctx.sidebarRight.close(tabId)` 能真正移除它，所以 `browser_close` 是
   **UI 动作**（走页面桥），完全不用 CLI；桥不可用时它直接报错，不会退化成 `tab-close`。
-  （旧版本留下的空壳页没有标记，`pageId` 也指不到它，需要手动点标签上的 × 关掉。）
+  （旧版本留下的空壳页没有页面身份，`pageId` 也指不到它，需要手动点标签上的 × 关掉。）
 - **CLI 只收养"attach 之后新建"的侧边栏页面**。Electron 通过 CDP 暴露了所有侧边栏页面（`/json/list` 里是 `webview` 类型），
   但 `playwright-cli tab-list` 只跟踪 attach 之后创建的 target：**用户手动打开的页、以及应用重启后重建的页都看不见**
   （实测：重新 detach→attach 也无效）。
@@ -495,8 +497,8 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
 - **`detach` 结束自动化会话**：DSH 与它的标签页毫发无损，但之后再操作会以全新的 attach 视图开始 ——
   已有的 `pageId` 不再解析（实测：detach 后重新 attach，`tab-list` 里看不到原来的 webview 目标），
   需要重新 `browser_open` / `browser_claim`。
-- **页面自己改标题**后标记会在 ~60ms 内补回；若某个页面在标记补回前被 `tab-list` 读到，会得到
-  `PAGE_NOT_FOUND`，重试一次即可。
+- **页面改自己的标题不再影响身份**：身份在 `window.__dshBrowserAutomation.pageId` 上，标题、SPA 路由、
+  未读角标都碰不到它。只有页面主动删掉这个字段才会失去身份（常规网页不会这么做）；真丢了就重新 claim。
 - `browser_run_code` 的 `code` 是**函数体源码**（`async page => { … }`），不是表达式；读值用 `return await page.evaluate(...)`，返回值原样当文本回传。
 - **插件不额外限制 scheme**（只拒 `dsh-app:`），但**平台是有约束的**：DSH 侧边栏浏览器自己的地址解析器只接受 `http`/`https`（含 loopback），
   拒绝 `file:`/`data:`/`blob:`、内嵌凭据和应用同源地址，本地文件归**文档预览**（依据 `dsh-client-ui-sidebar-browser` README 的 Protocol policy）。
@@ -547,7 +549,8 @@ DSH 的侧栏是"每个会话一份"，但**只有当前显示的那个会话有
 | `browser_claim` | ✅（接管眼前那页） | ❌ 拒绝（`PAGE_FOREIGN_SESSION`） |
 
 **后台关闭**同理：`closeIn(sessionId, tabId)` 在会话没有 adopted store 时**静默 no-op**，而 `close(tabId)` 只作用于屏幕上的那条 strip。
-所以关页也走"短暂点亮"：切到该会话 → `close(tabId)` → 切回；最后用 **DOM 里 chip 是否消失**校验结果（不靠"没有抛异常"）。
+所以关页也走"短暂点亮"：切到该会话 → `close(tabId)` → 切回；最后用**侧栏控制器的标签页列表里这个
+`tabId` 是否消失**校验结果（不靠"没有抛异常"，也不靠芯片文字）。
 
 **后台开页**（`openTabIn`）依赖一件确定的运行时事实：**该会话的侧栏必须可见（lay out）**。
 可见时 tab 写进 store 后 webview 会被创建、页面真的加载；仅仅是"挂载但隐藏"不够——
@@ -574,22 +577,26 @@ cd dsh-browser-automation
 node --test
 ```
 
-104 个用例，覆盖：
+177 个用例，覆盖：
 
-- `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、零命中/多命中、索引漂移）；
-- 标记脚本（追加、幂等、剥旧标记、页面改标题后补回、更新 `<title>` 的场景）——用 `node:vm` + 假 DOM 真跑；
+- `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、`current`/字段集）；
+- 页面身份脚本（写入 `window`、标题保持不变、幂等、初始化脚本嵌入）——用 `node:vm` + 假页面真跑；
+- **页面目录与列表**：`discover` 按页面内身份归属会话、跳过已关闭页、`browser_list` 用目录取 pageId；
 - **两种启动模式的约束**：桥不在/从未连上/掉线三种状态都必须报错且**不碰 CLI**（断言没有任何
   `tab-select`/`goto`，也没登记 pageId）；claim 在"看不见页面"、"页面还没进 tab-list"、"可见 URL 带尾斜杠或 hash"
-  各种情况下的行为；claim 换标记后旧 pageId 必须注销；
-- **关闭必须是 UI 动作**：断言 `browser_close` 全程**零 CLI 调用**；页面侧找不到 chip 时报原因且不注销登记；
-  桥不可用时直接报错（不退化成 `tab-close`）；非法 pageId 先被拒；
+  各种情况下的行为；claim 从页面目录读出旧身份后必须注销旧 pageId；
+- **关闭必须是 UI 动作**：断言 `browser_close` 全程**零 CLI 调用**；页面侧找不到标签页时报原因且不注销登记；
+  桥不可用时直接报错（不退化成 `tab-close`）；非法 pageId 先被拒；关闭命令带上登记的 `tabId`
+  （没有登记时从页面目录取网址兜底）；
 - **截图的两条路径**：可见页走 CLI 命令、隐藏页走"补 tabId→focus→长超时"；`fullPage` 透传；
   `target`（元素截图）必须留在 CLI 路径上；拿不到 tabId 时老实走普通路径；桥断了仍能走普通路径；
 - **client 半边的 harness**：把真实的 `client.js` 按页面的方式载入，用假 `__ModuleLoader__` + 假
   `ctx.sidebarRight`/`ctx.layout` 跑 `apply()`。断言 `hello` 用文档相对 URL、`open-tab` 只调一次
-  `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/找不到 chip/toggle 抛错"五种情况下的动作序列、
+  `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/没有匹配标签页/toggle 抛错"五种情况下的动作序列、
   `close-page` 真的调 `close(tabId)`、**collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、
   失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
+- **徽标不再读标题**：单测断言它调用宿主端的 `shared-state` 查询、源码里没有 `getTitle`/`dshpg`；
+  `sharedTab` 优先按 `tabId`、只对没有 tabId 的记录按网址兜底；
 - **重载 = goto 同 URL**：断言 driver 收到的是"该页自己的 URL"而不是 `reload` 命令；无 URL 时明确报错；`dsh-app:` 目标仍拒；
   **可见操作先聚焦**：goto/reload 的调用顺序是 `prepare-capture`（切前台）→ 导航；
 - **配置读写**：Config 的 8 个字段必须全部 `.volatile()`（否则表单看不到），默认值与 README 一致，profile 覆盖经引用读取；
@@ -607,6 +614,9 @@ node --test
 - `SessionManager` 互斥、`discover` 的会话归属、`normalizeUrl` 规则、`samePage`、`sanitize` 的 JSON 安全。
 
 ### 验收记录（2026-10-28，真机）
+
+> 以下记录来自**标题标记时代**，保留作为历史。页面身份后来改为只写 `window`（见 §4），
+> 其中"标题带标记"的描述已不代表现在的行为。
 
 | 用例 | 结果 |
 |---|---|
@@ -640,8 +650,7 @@ node --test
 | `browser_status` 里 `bridge.clients` 为空 | 同上：页面还没加载 client.js，刷新窗口 |
 | `bridgeError: cannot get property "webServer" without inject` | 插件 generation 过期：重启 DSH 让新代码生效 |
 | `browser_screenshot` 报截图超时 | 那个标签页不在前台、没有渲染面；先切到前台（或改用 `browser_snapshot`） |
-| `PAGE_NOT_FOUND` | 页面被用户关掉了、标记还没补回、或 CLI 被 detach 过；`browser_list` 看现状，再 `browser_open` / `browser_claim` |
-| `AMBIGUOUS_PAGE` | 同一标题出现两个相同 `pageId`（几乎不可能是 bug 之外的原因）；`browser_list scope=all` 看全量 |
+| `PAGE_NOT_FOUND` | 页面被用户关掉了、页面内部身份字段丢失、或 CLI 被 detach 过；`browser_list` 看现状，再 `browser_open` / `browser_claim` |
 | CLI 超时 | `playwright-cli list`（看守护进程），必要时 `playwright-cli -s=dsh detach` |
 | 启动即崩溃：`web boot: 1 entry did not activate / … import failed` | client bundle 的 revision 与内容不同步（改完 client.js 立刻刷新页面时出现）。**先把本行 disable**（`set_plugin enabled=false`）再启动，进应用后 enable，最后刷新一次页面 |
 | `detach` 之后第一次操作很慢 | 正常：下一次操作会重新 `attach`（含一次重试） |

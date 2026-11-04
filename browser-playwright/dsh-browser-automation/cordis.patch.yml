@@ -8,7 +8,8 @@
       name: '@local/dsh-browser-automation'
       config:
         # playwright-cli session name (`-s=`). One session is shared by every
-        # DSH session; page markers, not the CLI session, separate them.
+        # DSH session; the page identity (its session digest), not the CLI
+        # session, separates their pages.
         session: dsh
         # There is deliberately no port setting: the port is whatever DSH Desktop was
         # started with (--remote-debugging-port=0 for a fresh one per launch, or a fixed
@@ -17,7 +18,8 @@
         # Attach at startup so sidebar pages opened afterwards are visible to the CLI.
         # Costs one daemon process while DSH runs; only one DSH instance at a time.
         autoAttach: true
-        # Floating badge on every page the plugin controls ("正在与智能体共享").
+        # Overlay badge above the sidebar for the controlled page in view
+        # ("正在与智能体共享"); never painted into the page.
         showSharedBadge: true
         # CLI command or absolute path. Defaults to `playwright-cli` on PATH.
         command: playwright-cli

@@ -79,7 +79,7 @@ export function createTools(runtime) {
           properties: {
             pageId: string('Stable page handle for every later call.'),
             url: string('The URL the tab reports after loading.'),
-            title: string('Current page title, including the page marker.'),
+            title: string("The page's own title."),
             background: boolean(
               'True when the tab was created in a conversation that is not on screen: the page has no visible ' +
                 'surface, so it will not be focused and cannot be screenshotted.',
@@ -118,7 +118,7 @@ export function createTools(runtime) {
         'logged into a page and want you to continue from there. ' +
         'The sidebar must be open with a browser tab selected: a collapsed sidebar keeps the page alive but ' +
         'gives it no surface, so the plugin cannot tell which page the user is on. ' +
-        'SIDE EFFECT: this replaces the page marker on that tab, so any earlier pageId for the same tab stops ' +
+        'SIDE EFFECT: this replaces the page identity on that tab, so any earlier pageId for the same tab stops ' +
         'resolving; the user may be actively using that page, so ask before claiming when the intent is unclear. ' +
         'Cannot take over a page that existed before playwright-cli attached (for example one opened before an app ' +
         'restart): the CLI never adopts it. Reopen that URL (or browser_open it) and claim the new tab instead. ' +
@@ -134,10 +134,10 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string('Stable page handle for every later call.'),
-            title: string('Page title before the marker was replaced.'),
+            title: string('The page\'s own title.'),
             url: string('Current URL.'),
             replacedExistingPageId: string(
-              'Present when the tab already carried a marker: the pageId it lost, now unregistered.',
+              'Present when the page already carried an identity: the pageId it lost (no longer resolvable).',
             ),
           },
           required: ['pageId', 'url'],
@@ -463,7 +463,7 @@ export function createTools(runtime) {
       name: 'browser_goto',
       description:
         'Navigate a controlled page to another URL in its existing tab. This is the default way to change ' +
-        'address: it costs no new tab, and the page handle stays valid because the marker is re-applied after ' +
+        'address: it costs no new tab, and the page handle stays valid because the identity is re-applied after ' +
         'the navigation. The tab is brought to the front first, so the user can see it. ' +
         'The previous page state is not preserved — DOM, scroll and form input are gone after the navigation. ' +
         'When that state matters (you will come back to it, or the user is working in it), open a second tab ' +

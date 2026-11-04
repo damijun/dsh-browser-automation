@@ -5,18 +5,23 @@ import { createHash, randomBytes } from 'node:crypto';
  * playwright-cli tab index is a volatile intermediate that is re-derived on
  * every call.
  *
- * The token is embedded verbatim in the page title (`<title> [dshpg-…]`), which
- * is what `playwright-cli tab-list` prints. It must therefore be:
- *   - unique across every DSH session, including two sessions opening the same URL;
- *   - short enough to stay readable in a tab chip;
- *   - ASCII and free of the characters tab-list escaping has to handle.
+ * The identity lives in exactly one place: the page's own `window`, as
+ * `window.__dshBrowserAutomation.pageId`. The marker expression writes it, an
+ * init script re-writes it after every navigation, and `src/page-catalog.js`
+ * reads it back through `run-code` (the Host half is the only half that can run
+ * code inside the page). Nothing is written into `document.title` or anywhere
+ * else a page renders, so the sidebar tab keeps the page's own title.
+ *
+ * The id must be unique across every DSH session (including two sessions opening
+ * the same URL) and traceable back to its owner: the six hexadecimal characters
+ * after `dshpg-` are a digest of the owning DSH session, which is what keeps
+ * attribution working when the Host's in-memory registry is empty.
  */
 const PREFIX = 'dshpg';
-const TOKEN = new RegExp(`${PREFIX}-[0-9a-f]{6}-[0-9a-f]{8}`, 'g');
 
 /**
- * Deterministic short digest of the owning DSH session, so a page token is
- * traceable back to its session when reading a raw `tab-list` by hand.
+ * Deterministic short digest of the owning DSH session, so a page id carries the
+ * answer to "which conversation owns this page" even when the registry lost it.
  *
  * @param {string} sessionId
  */
@@ -39,25 +44,12 @@ export function newPageId(sessionId, taken) {
 }
 
 /**
- * Every page token found in a string (a title, a URL, a whole tab-list).
+ * Expression evaluated inside the page (through `playwright-cli eval`, or as an
+ * init script) that installs the page's identity on its `window` object.
  *
- * @param {string} text
- */
-export function extractPageIds(text) {
-  return String(text ?? '').match(TOKEN) ?? [];
-}
-
-/**
- * Expression evaluated inside the page (through `playwright-cli eval`) that
- * appends the marker to `document.title` and keeps it there.
- *
- * Pages own their title: SPA routers and notification badges rewrite it after
- * load (a Bilibili tab is the classic case), which would erase a one-shot
- * marker. A MutationObserver on `<head>` re-appends it; the guard inside
- * `tag()` makes that idempotent, so re-tagging cannot accumulate brackets.
- *
- * Any marker from an earlier claim is stripped first: two markers in one title
- * would make `resolveIndex` ambiguous for the previous owner.
+ * The page owns this object: nothing in the plugin ever deletes it, and a page
+ * that rewrites its own title cannot lose it. Re-running the expression is
+ * idempotent — it replaces the object with the same id.
  *
  * The whole thing is one IIFE because playwright-cli evaluates the argument as
  * `() => (<expr>)` — a bare statement list is a syntax error there.
@@ -65,159 +57,37 @@ export function extractPageIds(text) {
  * @param {string} pageId
  * @returns {string} JavaScript source for `playwright-cli eval`
  */
-/**
- * The floating "shared with the agent" badge.
- *
- * Why in the page rather than on the tab chip: the sidebar's per-tab title slot is
- * keyed by pane id and only covers panes a plugin registers itself, so the browser
- * tabs DSH owns have no public decoration hook. The page is the one surface this
- * plugin fully controls, and an injected node survives every navigation because it is
- * part of the init script — the same mechanism the title marker uses.
- *
- * Two properties matter more than looks:
- *   - `pointer-events: none`, so it can never eat a click meant for the page;
- *   - a shadow root plus `all: initial`, so the host page's CSS cannot restyle or hide
- *     it and it cannot leak styles into the page.
- */
-export const SHARED_BADGE_ID = '__dsh-ba-shared__';
-
-/**
- * The badge a controlled page shows, as part of the marker expression.
- *
- * `badge: false` keeps the marker (title token) but paints nothing — that is the
- * `showSharedBadge: false` setting.
- *
- * @param {string} pageId
- * @param {{ badge?: boolean, text?: string }} [options]
- * @returns {string} JavaScript source for `playwright-cli eval`
- */
-export function titleMarkerExpression(pageId, options = {}) {
+export function pageMarkerExpression(pageId) {
   const id = JSON.stringify(pageId);
-  const badge = options.badge !== false;
-  const text = JSON.stringify(options.text ?? '正在与智能体共享');
-  const badgeScript = badge
-    ? [
-        `  const BADGE_ID = ${JSON.stringify(SHARED_BADGE_ID)};`,
-        `  const BADGE_TEXT = ${text};`,
-        '  let badgeTimer = 0;',
-        '  const dropBadge = () => {',
-        '    try {',
-        '      const node = document.getElementById(BADGE_ID);',
-        '      if (node) node.remove();',
-        '    } catch (error) {}',
-        '  };',
-        '  const paintBadge = () => {',
-        '    try {',
-        '      if (!document.body) return false;',
-        '      if (document.getElementById(BADGE_ID)) return true;',
-        '      const host = document.createElement("div");',
-        '      host.id = BADGE_ID;',
-        '      host.setAttribute("aria-hidden", "true");',
-        '      host.style.cssText = "position:fixed!important;top:12px!important;right:12px!important;" +',
-        '        "z-index:2147483647!important;pointer-events:none!important;contain:layout style!important";',
-        '      const shadow = host.attachShadow({ mode: "open" });',
-        '      const pill = document.createElement("div");',
-        // Decorative and non-interactive: keep it out of the accessibility tree so a
-        // page snapshot does not surface a ref the model could try to click.
-        '      pill.setAttribute("role", "presentation");',
-        '      pill.setAttribute("aria-hidden", "true");',
-        '      pill.style.cssText = "all:initial;display:inline-flex;align-items:center;gap:6px;" +',
-        '        "font:500 12px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#fff;" +',
-        '        "background:rgba(17,24,39,.86);border-radius:999px;padding:4px 12px 4px 9px;" +',
-        '        "box-shadow:0 2px 10px rgba(0,0,0,.28);white-space:nowrap;user-select:none";',
-        '      const dot = document.createElement("span");',
-        '      dot.style.cssText = "all:initial;display:block;width:7px;height:7px;border-radius:50%;" +',
-        '        "background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.28)";',
-        '      const label = document.createElement("span");',
-        '      label.style.cssText = "all:initial;font:inherit;color:#fff";',
-        '      label.setAttribute("aria-hidden", "true");',
-        '      label.textContent = BADGE_TEXT;',
-        '      pill.appendChild(dot);',
-        '      pill.appendChild(label);',
-        '      shadow.appendChild(pill);',
-        '      document.body.appendChild(host);',
-        '      return true;',
-        '    } catch (error) { return false; }',
-        '  };',
-        '  const ensureBadge = () => {',
-        '    if (paintBadge()) return;',
-        '    if (badgeTimer) return;',
-        // An init script can run before <body> exists; retry briefly instead of giving up.
-        '    let tries = 0;',
-        '    badgeTimer = setInterval(() => {',
-        '      if (paintBadge() || ++tries > 40) { clearInterval(badgeTimer); badgeTimer = 0; }',
-        '    }, 50);',
-        '  };',
-        '  ensureBadge();',
-        '  const badgePresent = () => { try { return Boolean(document.getElementById(BADGE_ID)); } catch (error) { return null; } };',
-      ]
-    : [
-        '  const dropBadge = () => {};',
-        // The retry loop below calls ensureBadge() unconditionally, so the badge-off
-        // script must still define it. Leaving it out made every tick throw a
-        // ReferenceError before `++tries`, which kept the interval alive forever.
-        '  const ensureBadge = () => {};',
-        '  const badgePresent = () => false;',
-      ];
   return [
     '(() => {',
     `  const id = ${id};`,
-    '  const suffix = " [" + id + "]";',
-    '  const previous = /\\[\\s*dshpg-[0-9a-f]{6}-[0-9a-f]{8}\\s*\\]/g;',
-    '  const tag = () => {',
-    '    try {',
-    '      const current = String(document.title);',
-    '      if (current.includes(id)) return;',
-    '      document.title = current.replace(previous, "").replace(/\\s+$/, "") + suffix;',
-    '    } catch (error) {}',
-    '  };',
-    '  tag();',
-    '  try { if (window.__dshBrowserAutomation && window.__dshBrowserAutomation.dispose) window.__dshBrowserAutomation.dispose(); } catch (error) {}',
-    ...badgeScript,
-    '  let timer = 0;',
-    // Declared before the window object so the previous instance's dispose() can
-    // clear it. Without that, every re-mark left a second retry interval running.
-    '  let retry = 0;',
-    '  const schedule = () => {',
-    '    if (timer) return;',
-    '    timer = setTimeout(() => { timer = 0; tag(); }, 60);',
-    '  };',
-    '  try {',
-    '    const observer = new MutationObserver(schedule);',
-    '    const target = document.head || document.documentElement;',
-    '    if (target) observer.observe(target, { childList: true, subtree: true, characterData: true });',
-    '    window.__dshBrowserAutomation = { pageId: id, dispose: () => { observer.disconnect(); if (timer) clearTimeout(timer); if (retry) clearInterval(retry); if (badgeTimer) clearInterval(badgeTimer); dropBadge(); } };',
-    '  } catch (error) {}',
-    // An init script runs before the document has a <title>; keep trying briefly.
-    // The guard guarantees `++tries` runs even if a badge implementation throws,
-    // so the interval always terminates.
-    '  let tries = 0;',
-    '  retry = setInterval(() => { tag(); try { ensureBadge(); } catch (error) {} if (++tries > 40) clearInterval(retry); }, 100);',
-    '  return JSON.stringify({ pageId: id, title: document.title, url: location.href, badge: badgePresent() });',
+    '  try { window.__dshBrowserAutomation = { pageId: id }; } catch (error) {}',
+    '  return JSON.stringify({ pageId: id, title: document.title, url: location.href });',
     '})()',
   ].join('\n');
 }
 
 /**
- * Playwright code that makes the marker survive every future navigation.
+ * Playwright code that makes the identity survive every future navigation.
  *
- * A navigation destroys the injected script and observer, so a marker applied
- * only through `eval` disappears the first time the page navigates — which is
- * most clicks on most sites. `page.addInitScript` is registered on the tab and
- * runs on each new document (verified across CLI invocations and across origins),
- * so the marker is re-applied without spending another round trip per action.
+ * A navigation creates a new document, so an identity written only through
+ * `eval` disappears on the next click. `page.addInitScript` is registered on the
+ * tab and runs in every new document (verified across CLI invocations and across
+ * origins), so the field is re-installed without spending a round trip per
+ * action.
  *
  * @param {string} pageId
- * @param {{ badge?: boolean, text?: string }} [options]
  * @returns {string} JavaScript for `playwright-cli run-code`
  */
-export function installMarkerCode(pageId, options = {}) {
-  const script = titleMarkerExpression(pageId, options);
+export function installMarkerCode(pageId) {
+  const script = pageMarkerExpression(pageId);
   return `async page => { await page.addInitScript(${JSON.stringify(script)}); return "installed" }`;
 }
 
 /**
- * Expression that reports the marker currently installed in a page, if any.
+ * Expression that reports the identity currently installed in a page, if any.
+ * Used as a read-back after a navigation or an arbitrary snippet.
  */
 export const probeMarkerExpression = [
   '(() => JSON.stringify({',
@@ -227,6 +97,3 @@ export const probeMarkerExpression = [
   '  pageId: window.__dshBrowserAutomation ? window.__dshBrowserAutomation.pageId : null,',
   '}))()',
 ].join('\n');
-
-
-

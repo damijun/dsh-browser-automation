@@ -309,25 +309,19 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Build the panel component. `t` comes from the effect that owns the locale
-     * registration, so the strings live exactly as long as the registrations do.
-     *
-     * @param {(key: string) => string} t
-     */
-    /**
      * The "driven by the agent" badge, drawn on the frame-wide overlay above the
      * sidebar, never inside the page.
      *
-     * The page itself is untouched: the badge appears when the browser tab in view
-     * carries this plugin's pageId token in its document title — that token is the
-     * plugin's join key, and its presence is exactly "this page is shared". The
-     * overlay layer is click-through, and the badge opts out of pointer events too,
-     * so it can never intercept a click meant for the page.
+     * The page itself is untouched. This half cannot read the sidebar page's
+     * `window` object, and the page title no longer carries an identity, so "is
+     * this visible tab shared" is asked of the Host using the sidebar's own tab id
+     * (with the URL as the fallback). The overlay layer is click-through, and the
+     * badge opts out of pointer events too, so it can never intercept a click
+     * meant for the page.
      *
      * @param {(key: string) => string} t
      */
     function makeSharedBadge(t) {
-      const TOKEN = /\[dshpg-[0-9a-f]{6}-[0-9a-f]{8}\]/;
       return function SharedBadge() {
         const h = React.createElement;
         const [box, setBox] = React.useState(null);
@@ -357,32 +351,61 @@ window.__ModuleLoader__.load({
           let disposed = false;
           let frame = 0;
           const observed = new Set();
+          // The last Host answer, keyed by "tab id|url". Reusing it for a moment keeps
+          // observer bursts from turning into request bursts; a tab switch changes the
+          // key and asks immediately.
+          let answer = { key: null, shared: false, at: 0 };
+          let asking = null;
 
-          const measure = () => {
-            frame = 0;
-            if (disposed) return;
-            let found = null;
-            for (const pane of document.querySelectorAll("[data-sidebar-right-tab]")) {
+          /**
+           * The sidebar tab the user is looking at: the active one when it is a
+           * browser pane, otherwise the first laid-out pane that carries a webview
+           * (a split view can show two).
+           */
+          const visibleCarrier = () => {
+            const candidates = [];
+            for (const pane of document.querySelectorAll('[data-sidebar-right-tab]')) {
               const rect = pane.getBoundingClientRect();
               if (rect.width < 80 || rect.height < 80) continue;
-              const view = pane.querySelector('webview');
+              const view = typeof pane.querySelector === 'function' ? pane.querySelector('webview') : null;
               if (!view) continue;
-              let title = '';
+              let url = '';
               try {
-                title = view.getTitle() || '';
+                url = view.getURL() || '';
               } catch (error) {
-                title = '';
+                url = '';
               }
-              if (!TOKEN.test(title)) continue;
-              // Anchor to the address field: flush against its right end, which keeps
-              // the "open in system browser" button next to it untouched.
-              const field = pane.querySelector('input');
-              const anchor = field ? field.getBoundingClientRect() : rect;
-              found = { top: anchor.top, height: anchor.height, right: anchor.right };
-              break;
+              let tabId = '';
+              try {
+                tabId = pane.getAttribute('data-sidebar-right-tab') || '';
+              } catch (error) {
+                tabId = '';
+              }
+              candidates.push({ pane, rect, tabId, url });
             }
+            if (candidates.length <= 1) return candidates[0] ?? null;
+            let activeId = null;
+            try {
+              const service = sidebar();
+              activeId = service && typeof service.active === 'function' ? service.active()?.id ?? null : null;
+            } catch (error) {
+              activeId = null;
+            }
+            return candidates.find((candidate) => activeId !== null && candidate.tabId === activeId) ?? candidates[0];
+          };
+
+          const place = (candidate, shared) => {
+            if (!shared) {
+              setBox((previous) => (previous === null ? previous : null));
+              return;
+            }
+            // Anchor to the address field: flush against its right end, which keeps
+            // the "open in system browser" button next to it untouched.
+            const field =
+              typeof candidate.pane.querySelector === 'function' ? candidate.pane.querySelector('input') : null;
+            const anchor = field ? field.getBoundingClientRect() : candidate.rect;
+            const found = { top: anchor.top, height: anchor.height, right: anchor.right };
             setBox((previous) => {
-              if (found === null) return previous === null ? previous : null;
               if (
                 previous !== null &&
                 Math.abs(previous.top - found.top) < 1 &&
@@ -393,6 +416,32 @@ window.__ModuleLoader__.load({
               }
               return found;
             });
+          };
+
+          const measure = () => {
+            frame = 0;
+            if (disposed) return;
+            const candidate = visibleCarrier();
+            if (!candidate) {
+              setBox((previous) => (previous === null ? previous : null));
+              return;
+            }
+            const key = `${candidate.tabId}|${candidate.url}`;
+            if (answer.key === key && Date.now() - answer.at < 1_200) {
+              place(candidate, answer.shared);
+              return;
+            }
+            if (asking === key) return;
+            asking = key;
+            call('shared-state', { tabId: candidate.tabId, url: candidate.url }, 3_000)
+              .then((reply) => {
+                answer = { key, shared: Boolean(reply && reply.shared), at: Date.now() };
+                asking = null;
+                if (!disposed) measure();
+              })
+              .catch(() => {
+                asking = null;
+              });
           };
 
           const schedule = () => {
@@ -451,7 +500,7 @@ window.__ModuleLoader__.load({
           measure();
           if (mutate) mutate.observe(document.body, { childList: true, subtree: true });
           window.addEventListener('resize', schedule);
-          // Safety net: two seconds, sizes and titles only, in case the observers stop
+          // Safety net: two seconds, sizes and tab ids only, in case the observers stop
           // matching (a future DSH could rename the data attribute).
           const safety = setInterval(measure, 2000);
           return () => {
@@ -516,6 +565,13 @@ window.__ModuleLoader__.load({
         );
       };
     }
+
+    /**
+     * Build the panel component. `t` comes from the effect that owns the locale
+     * registration, so the strings live exactly as long as the registrations do.
+     *
+     * @param {(key: string) => string} t
+     */
     function makePanel(t) {
       const h = React.createElement;
       const dash = (value) => (value === null || value === undefined || value === '' ? '—' : String(value));
@@ -1320,40 +1376,58 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * The carrier `<webview>` showing one page, if this page can see it.
+       * The sidebar tab container for one page.
        *
-       * Desktop renders every sidebar browser tab as a `<webview>` guest whose
-       * `getTitle()` is the guest's `document.title` — which carries the pageId
-       * marker. That makes it the join key between a pageId and a sidebar tab.
+       * The sidebar's own tab id is exact, and it is what the Host stored when it
+       * opened or claimed the page. A page discovered after a Host reload has no
+       * stored tab id, so its URL is the fallback; two tabs on the same URL are
+       * ambiguous, and the caller reports that instead of guessing.
        *
-       * @param {string} pageId
+       * @param {{ tabId?: string | null, url?: string | null }} target
+       * @param {ParentNode} [root] scope, so per-conversation tab ids cannot collide
+       * @returns {Element | null}
        */
-      function viewFor(pageId) {
+      function paneFor(target, root = document) {
         try {
-          const views = [...document.querySelectorAll('webview')];
-          return (
-            views.find((view) => String(view.getTitle && view.getTitle()).includes(pageId)) ?? null
-          );
+          const panes = [...root.querySelectorAll('[data-sidebar-right-tab]')];
+          const tabId = typeof target.tabId === 'string' && target.tabId !== '' ? target.tabId : null;
+          if (tabId) {
+            // Exact id only. A stale id must fail the action instead of falling through
+            // to a same-URL tab, which could close or focus a page nobody asked for.
+            return panes.find((pane) => pane.getAttribute('data-sidebar-right-tab') === tabId) ?? null;
+          }
+          const url = typeof target.url === 'string' && target.url !== '' ? target.url : null;
+          if (!url) return null;
+          const matches = panes.filter((pane) => {
+            const view = pane.querySelector('webview');
+            if (!view || typeof view.getURL !== 'function') return false;
+            try {
+              return view.getURL() === url;
+            } catch (error) {
+              return false;
+            }
+          });
+          return matches.length === 1 ? matches[0] : null;
         } catch (error) {
           return null;
         }
       }
 
-      /**
-       * The sidebar tab id (`tabN`) whose chip shows this page's title.
-       *
-       * The strip renders one chip per tab with `data-sidebar-right-tab="tabN"`,
-       * and a browser chip's label is the observed page title — so the marker in
-       * `document.title` is what connects pageId to the UI's own tab identity.
-       * A collapsed sidebar renders no strip, hence no chips.
-       *
-       * @param {string} pageId
-       */
-      function tabIdFor(pageId) {
+      /** The `<webview>` inside one sidebar tab container, if this page can see it. */
+      function viewFor(pane) {
         try {
-          const chips = [...document.querySelectorAll('[data-sidebar-right-tab]')];
-          const chip = chips.find((element) => (element.textContent || '').includes(pageId));
-          return chip ? chip.getAttribute('data-sidebar-right-tab') : null;
+          return pane && typeof pane.querySelector === 'function' ? pane.querySelector('webview') : null;
+        } catch (error) {
+          return null;
+        }
+      }
+
+      /** The sidebar's own id for a container, when the DOM exposes it. */
+      function tabIdOf(pane) {
+        try {
+          return pane && typeof pane.getAttribute === 'function'
+            ? pane.getAttribute('data-sidebar-right-tab')
+            : null;
         } catch (error) {
           return null;
         }
@@ -1369,14 +1443,17 @@ window.__ModuleLoader__.load({
        * captures with a generous timeout because the first frame after a resize
        * takes a moment.
        *
-       * @param {string} pageId
+       * @param {string} tabId the sidebar's own tab id, when the Host knows it
+       * @param {string} url the page URL, the fallback when no tab id exists
        */
-      async function prepareCapture(pageId) {
+      async function prepareCapture(tabId, url) {
         const service = sidebar();
-        const view = viewFor(pageId);
-        const visible = view ? Boolean(onScreen(view)) : false;
+        const target = { tabId, url };
+        let pane = paneFor(target);
+        let view = viewFor(pane);
+        let visible = view ? Boolean(onScreen(view)) : false;
         const expanded = service && typeof service.isExpanded === 'function' ? service.isExpanded() : null;
-        if (visible) return { visible: true, tabId: tabIdFor(pageId), expanded, expandedNow: false };
+        if (visible) return { visible: true, tabId: tabIdOf(pane), expanded, expandedNow: false };
 
         let expandedNow = false;
         let expandVia = null;
@@ -1402,13 +1479,19 @@ window.__ModuleLoader__.load({
               expandError = `${expandError ?? ''} / ${error && error.message ? error.message : String(error)}`.trim();
             }
           }
-          // The strip mounts with the panel; chips do not exist before that.
+          // The strip mounts with the panel; tab containers do not exist before that.
           if (expandedNow) await sleep(350);
         }
-        const tabId = tabIdFor(pageId);
-        if (!tabId) return { visible: false, tabId: null, expanded, expandedNow, expandVia, expandError };
-        service.focus(tabId);
-        return { visible: false, tabId, expanded, expandedNow, expandVia, expandError };
+        pane = paneFor(target);
+        view = viewFor(pane);
+        visible = view ? Boolean(onScreen(view)) : false;
+        if (visible) return { visible: true, tabId: tabIdOf(pane), expanded, expandedNow, expandVia, expandError };
+        // Only a container that was actually found may be focused: a stale tab id must
+        // not select whichever tab now happens to carry that id.
+        const focusId = tabIdOf(pane);
+        if (!focusId) return { visible: false, tabId: null, expanded, expandedNow, expandVia, expandError };
+        service.focus(focusId);
+        return { visible: false, tabId: focusId, expanded, expandedNow, expandVia, expandError };
       }
 
       /**
@@ -1419,15 +1502,17 @@ window.__ModuleLoader__.load({
        * and stays focused. Only the sidebar controller can remove the tab, so this
        * is a UI action like `openTab`, not a CLI one.
        *
-       * @param {string} pageId
+       * @param {string} sessionId
+       * @param {string} tabId the sidebar's own tab id, when the Host knows it
+       * @param {string} url the page URL, the fallback when no tab id exists
        */
-      async function closePage(pageId, sessionId) {
+      async function closePage(sessionId, tabId, url) {
         const service = sidebar();
         if (!service || typeof service.close !== 'function') {
           return { closed: false, tabId: null, reason: 'the sidebar-right client service cannot close tabs' };
         }
         // Look only inside the owning conversation: tab ids repeat per conversation, so a
-        // document-wide chip search could close a same-numbered tab in the conversation
+        // document-wide lookup could close a same-numbered tab in the conversation
         // that happens to be on screen.
         const rootFor = (owner) =>
           typeof owner === "string" && owner !== ""
@@ -1441,26 +1526,18 @@ window.__ModuleLoader__.load({
             reason: `the sidebar of conversation ${sessionId} is not mounted, so its tab cannot be closed from here`,
           };
         }
-        const chipFor = (owner) => {
-          const scope = rootFor(owner);
-          if (!scope) return null;
-          return (
-            [...scope.querySelectorAll("[data-sidebar-right-tab]")].find((element) =>
-              (element.textContent || "").includes(pageId),
-            ) ?? null
-          );
-        };
-        const chip = chipFor(sessionId);
-        const tabId = chip ? chip.getAttribute("data-sidebar-right-tab") : null;
-        if (!tabId) {
+        const mounted = typeof service.mounted?.getSnapshot === "function" ? service.mounted.getSnapshot() : null;
+        const owner = typeof sessionId === "string" && sessionId !== "" ? sessionId : mounted;
+        const pane = paneFor({ tabId, url }, root);
+        const resolved = tabId || tabIdOf(pane);
+        if (!resolved) {
           return {
             closed: false,
             tabId: null,
-            reason: "no sidebar tab chip carries this page (the tab may already be gone, or its title lost the marker)",
+            reason:
+              "no sidebar tab matches this page (the tab may already be gone, or the Host has no tab id for it)",
           };
         }
-        const mounted = typeof service.mounted?.getSnapshot === "function" ? service.mounted.getSnapshot() : null;
-        const owner = typeof sessionId === "string" && sessionId !== "" ? sessionId : mounted;
         const workspace = (() => {
           try {
             return typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
@@ -1480,7 +1557,7 @@ window.__ModuleLoader__.load({
             if (!canSwitch) {
               return {
                 closed: false,
-                tabId,
+                tabId: resolved,
                 reason:
                   `conversation ${owner} is not on screen and this DSH build cannot select it, so its tab ` +
                   "cannot be closed from here. Close it in that conversation.",
@@ -1494,9 +1571,9 @@ window.__ModuleLoader__.load({
             const until = Date.now() + 3_000;
             while (!visible(owner) && Date.now() < until) await sleep(100);
           }
-          service.close(tabId);
+          service.close(resolved);
         } catch (error) {
-          return { closed: false, tabId, reason: error && error.message ? error.message : String(error) };
+          return { closed: false, tabId: resolved, reason: error && error.message ? error.message : String(error) };
         } finally {
           if (switched) {
             try {
@@ -1504,22 +1581,44 @@ window.__ModuleLoader__.load({
             } catch (error) {}
           }
         }
-        // The chip is what the user sees: if it survived, the close did not happen.
-        // Only meaningful with a known owner: without a session the chip lookup covers the
-        // whole document and cannot tell which strip it came from.
-        if (typeof sessionId !== "string" || sessionId === "") return { closed: true, tabId };
+        // Verify against the controller's own tab list, which knows about tabs the DOM
+        // no longer shows; the DOM lookup is the fallback for builds without it.
+        const listed = () => {
+          try {
+            if (typeof service.tabsIn === "function") {
+              return [...service.tabsIn(owner)].map((tab) => tab.tabId ?? tab.id);
+            }
+          } catch (error) {}
+          try {
+            const snapshot =
+              service.openTabs && typeof service.openTabs.getSnapshot === "function"
+                ? service.openTabs.getSnapshot()
+                : null;
+            if (Array.isArray(snapshot)) {
+              return snapshot
+                .filter((tab) => !tab.sessionId || tab.sessionId === owner)
+                .map((tab) => tab.tabId);
+            }
+          } catch (error) {}
+          return null;
+        };
         const until = Date.now() + 2_000;
-        while (chipFor(owner) && Date.now() < until) await sleep(150);
-        if (chipFor(owner)) {
-          return {
-            closed: false,
-            tabId,
-            reason:
-              `the sidebar still shows tab ${tabId} of conversation ${owner} after closing it, so the tab was ` +
-              "not removed. Try again from that conversation.",
-          };
+        for (;;) {
+          const ids = listed();
+          const stillThere = ids ? ids.includes(resolved) : Boolean(paneFor({ tabId: resolved }, root));
+          if (!stillThere) break;
+          if (Date.now() >= until) {
+            return {
+              closed: false,
+              tabId: resolved,
+              reason:
+                `the sidebar still lists tab ${resolved} of conversation ${owner} after closing it, so the tab was ` +
+                "not removed. Try again from that conversation.",
+            };
+          }
+          await sleep(150);
         }
-        return { closed: true, tabId };
+        return { closed: true, tabId: resolved };
       }
       /** @param {{ requestId: string, kind: string, url?: string, pageId?: string }} command */
       async function handle(command) {
@@ -1543,12 +1642,16 @@ window.__ModuleLoader__.load({
           return;
         }
         if (command.kind === 'prepare-capture') {
-          const value = await prepareCapture(String(command.pageId ?? ''));
+          const value = await prepareCapture(String(command.tabId ?? ''), String(command.url ?? ''));
           await call('result', { requestId: command.requestId, ok: true, value });
           return;
         }
         if (command.kind === 'close-page') {
-          const value = await closePage(String(command.pageId ?? ''), String(command.sessionId ?? ''));
+          const value = await closePage(
+            String(command.sessionId ?? ''),
+            String(command.tabId ?? ''),
+            String(command.url ?? ''),
+          );
           await call('result', { requestId: command.requestId, ok: true, value });
           return;
         }

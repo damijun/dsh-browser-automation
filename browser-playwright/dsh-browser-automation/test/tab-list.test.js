@@ -3,8 +3,6 @@ import assert from 'node:assert/strict';
 
 import {
   parseTabList,
-  matchPage,
-  resolveIndex,
   currentIndex,
   describeTabs,
 } from '../src/tab-list.js';
@@ -71,101 +69,6 @@ test('collects unrecognized lines instead of dropping the list', () => {
 test('empty output yields an empty list', () => {
   assert.deepEqual(parseTabList(''), { tabs: [], ignored: [] });
   assert.deepEqual(parseTabList(undefined), { tabs: [], ignored: [] });
-});
-
-test('resolves an index by page id in a title', () => {
-  const pageId = 'dshpg-3f9a1c-77aa11bb';
-  const output = [
-    '- 0: [T](https://a.test/)',
-    `- 1: [Example Domain [${pageId}]](https://example.com/)`,
-    '- 2: (current) [Other](https://b.test/)',
-  ].join('\n');
-  const hit = resolveIndex(output, pageId);
-  assert.equal(hit.index, 1);
-  assert.equal(hit.current, false);
-  assert.equal(hit.url, 'https://example.com/');
-});
-
-test('resolves an index by page id in a URL fragment', () => {
-  const pageId = 'dshpg-aaaaaa-12345678';
-  const output = `- 4: [T](https://a.test/#${pageId})`;
-  assert.equal(resolveIndex(output, pageId).index, 4);
-});
-
-test('index drift after other tabs close still resolves', () => {
-  const pageId = 'dshpg-aaaaaa-12345678';
-  const before = [
-    `- 0: [Mine [${pageId}]](https://mine.test/)`,
-    '- 1: [Neighbour](https://other.test/)',
-  ].join('\n');
-  const after = `- 0: [Mine [${pageId}]](https://mine.test/)`;
-  assert.equal(resolveIndex(before, pageId).index, 0);
-  assert.equal(resolveIndex(after, pageId).index, 0);
-
-  const shifted = [
-    '- 0: [Neighbour](https://other.test/)',
-    `- 1: [Mine [${pageId}]](https://mine.test/)`,
-  ].join('\n');
-  assert.equal(resolveIndex(shifted, pageId).index, 1);
-});
-
-test('missing page id raises PAGE_NOT_FOUND with the current snapshot', () => {
-  assert.throws(
-    () => resolveIndex(REAL_SAMPLE, 'dshpg-deadbe-00000000'),
-    (error) => {
-      assert.equal(error.code, 'PAGE_NOT_FOUND');
-      assert.equal(error.tabs.length, 3);
-      return true;
-    },
-  );
-});
-
-test('duplicate page ids raise AMBIGUOUS_PAGE instead of picking the first', () => {
-  const pageId = 'dshpg-same00-11112222';
-  const output = [
-    `- 0: [One [${pageId}]](https://one.test/)`,
-    `- 1: [Two [${pageId}]](https://two.test/)`,
-  ].join('\n');
-  assert.throws(
-    () => resolveIndex(output, pageId),
-    (error) => {
-      assert.equal(error.code, 'AMBIGUOUS_PAGE');
-      assert.deepEqual(
-        error.matches.map((match) => match.index),
-        [0, 1],
-      );
-      return true;
-    },
-  );
-});
-
-test('different pages resolve independently', () => {
-  const a = 'dshpg-aaa-00000001';
-  const b = 'dshpg-bbb-00000002';
-  const output = [
-    `- 0: [A [${a}]](https://a.test/)`,
-    `- 1: [B [${b}]](https://b.test/)`,
-  ].join('\n');
-  assert.equal(resolveIndex(output, a).index, 0);
-  assert.equal(resolveIndex(output, b).index, 1);
-  assert.deepEqual(
-    matchPage(parseTabList(output).tabs, a).map((tab) => tab.index),
-    [0],
-  );
-});
-
-test('includes page ids sharing a session prefix only once each', () => {
-  const session = 'dshpg-abc123';
-  const one = `${session}-aaaaaaaa`;
-  const two = `${session}-bbbbbbbb`;
-  const output = [
-    `- 0: [One [${one}]](https://a.test/)`,
-    `- 1: [Two [${two}]](https://b.test/)`,
-  ].join('\n');
-  assert.deepEqual(
-    matchPage(parseTabList(output).tabs, session).map((tab) => tab.index),
-    [0, 1],
-  );
 });
 
 test('reports the current index', () => {

@@ -8,8 +8,7 @@ import { createTools, sanitize } from '../src/tools.js';
 import {
   newPageId,
   sessionTag,
-  extractPageIds,
-  titleMarkerExpression,
+  pageMarkerExpression,
   probeMarkerExpression,
   installMarkerCode,
 } from '../src/page-id.js';
@@ -310,7 +309,6 @@ test('page ids are unique, well formed and session-tagged', () => {
   const id = newPageId('session-alpha');
   assert.match(id, /^dshpg-[0-9a-f]{6}-[0-9a-f]{8}$/);
   assert.equal(id.split('-')[1], sessionTag('session-alpha'));
-  assert.deepEqual(extractPageIds(`title [${id}] tail`), [id]);
 
   const taken = new Set();
   for (let i = 0; i < 200; i += 1) {
@@ -321,112 +319,36 @@ test('page ids are unique, well formed and session-tagged', () => {
   assert.notEqual(sessionTag('session-a'), sessionTag('session-b'));
 });
 
-test('the marker expression appends, is idempotent, strips a stale marker', async () => {
+test('the marker installs the identity on window and leaves the title alone', () => {
   const pageId = 'dshpg-abcdef-01234567';
-  const previous = 'dshpg-111111-22222222';
-  const sandbox = fakePage(`Old title [${previous}]`);
-  runInNewContext(titleMarkerExpression(pageId), sandbox);
+  const sandbox = fakePage('Original title');
+  const raw = runInNewContext(pageMarkerExpression(pageId), sandbox);
+  assert.equal(sandbox.document.title, 'Original title', 'the page title must not be rewritten');
+  assert.equal(sandbox.window.__dshBrowserAutomation.pageId, pageId);
 
-  assert.equal(sandbox.document.title, `Old title [${pageId}]`);
-  // Running it again must not stack a second suffix.
-  runInNewContext(probeMarkerExpression, sandbox);
-  runInNewContext(titleMarkerExpression(pageId), sandbox);
-  assert.equal(sandbox.document.title, `Old title [${pageId}]`);
-  assert.equal(extractPageIds(sandbox.document.title).length, 1);
-
-  // A page that rewrites its own title gets the marker restored (debounced).
-  sandbox.document.title = 'Renamed by the page';
-  sandbox.fireMutation();
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  assert.equal(sandbox.document.title, `Renamed by the page [${pageId}]`);
-});
-
-test('the marker expression reports the marker it installed', () => {
-  const pageId = 'dshpg-abcdef-01234567';
-  const sandbox = fakePage('Start');
-  const raw = runInNewContext(titleMarkerExpression(pageId), sandbox);
   const parsed = JSON.parse(raw);
   assert.equal(parsed.pageId, pageId);
-  assert.equal(parsed.title, `Start [${pageId}]`);
+  assert.equal(parsed.title, 'Original title');
+  assert.equal(parsed.url, 'https://example.test/');
+
+  // Re-applying is idempotent and never duplicates anything in the title.
+  runInNewContext(pageMarkerExpression(pageId), sandbox);
+  assert.equal(sandbox.window.__dshBrowserAutomation.pageId, pageId);
+  assert.equal(sandbox.document.title, 'Original title');
   const probe = JSON.parse(runInNewContext(probeMarkerExpression, sandbox));
   assert.equal(probe.pageId, pageId);
   assert.equal(probe.url, 'https://example.test/');
 });
 
 function fakePage(initialTitle) {
-  let observer;
-  let retryCallback;
-  const sandbox = {
-    document: { title: initialTitle, head: {} },
+  return {
+    document: { title: initialTitle },
     location: { href: 'https://example.test/' },
     window: {},
-    MutationObserver: class {
-      constructor(callback) {
-        this.callback = callback;
-        observer = this;
-      }
-      observe() {}
-      disconnect() {
-        observer = undefined;
-      }
-    },
-    setTimeout,
-    clearTimeout,
-    // The real script retries briefly for late <title> elements; capture the timer
-    // callback so a test can prove it terminates, and return a truthy id.
-    setInterval: (callback) => {
-      retryCallback = callback;
-      return 1;
-    },
-    clearInterval: () => {
-      sandbox.retryCleared = true;
-    },
     JSON,
     String,
   };
-  sandbox.retryCleared = false;
-  sandbox.fireRetry = () => retryCallback?.();
-  sandbox.fireMutation = () => observer?.callback();
-  return sandbox;
 }
-
-/**
- * The badge is the user-facing half of "this page is controlled": it has to be
- * unpaintable into by the page's CSS (shadow root, all:initial) and must never eat a
- * click (pointer-events:none). showSharedBadge: false keeps the marker but paints
- * nothing.
- */
-test('the marker expression paints the shared badge, unless it is disabled', () => {
-  const pageId = 'dshpg-abcdef-01234567';
-  const on = titleMarkerExpression(pageId);
-  assert.match(on, /__dsh-ba-shared__/);
-  assert.match(on, /attachShadow\(\{ mode: "open" \}\)/);
-  assert.match(on, /pointer-events:none/);
-  assert.match(on, /all:initial/);
-  assert.match(on, /正在与智能体共享/);
-  // Both variants must stay executable in a page-like sandbox.
-  assert.match(runInNewContext(on, fakePage('Start')), /badge/);
-
-  const off = titleMarkerExpression(pageId, { badge: false });
-  assert.doesNotMatch(off, /attachShadow/);
-  assert.doesNotMatch(off, /__dsh-ba-shared__/);
-  const parsed = JSON.parse(runInNewContext(off, fakePage('Start')));
-  assert.equal(parsed.badge, false);
-});
-
-test('the badge-off retry loop neither throws nor keeps running', () => {
-  // Regression: the badge-off branch did not define ensureBadge, so every 100ms
-  // tick threw a ReferenceError before `++tries` — the interval never cleared and
-  // every marker application added another one (the renderer log grew without end).
-  const pageId = 'dshpg-abcdef-01234567';
-  const sandbox = fakePage('Start');
-  runInNewContext(titleMarkerExpression(pageId, { badge: false }), sandbox);
-  assert.equal(typeof sandbox.fireRetry, 'function', 'the retry loop was never scheduled');
-  assert.doesNotThrow(() => {
-    for (let tick = 0; tick < 45; tick += 1) sandbox.fireRetry();
-  });
-  assert.ok(sandbox.retryCleared, 'the retry interval must clear itself');
-});
 
 test('the durable marker installer injects the same script through addInitScript', () => {
   const pageId = 'dshpg-abcdef-01234567';
@@ -435,20 +357,20 @@ test('the durable marker installer injects the same script through addInitScript
   assert.match(code, /^async page => \{ await page\.addInitScript\(/);
   assert.ok(code.includes(pageId));
   // The embedded script is the same source the eval path uses, JSON-escaped.
-  const source = titleMarkerExpression(pageId);
+  const source = pageMarkerExpression(pageId);
   assert.ok(code.includes(JSON.stringify(source)), 'addInitScript must receive the eval expression');
   // And that source really is executable script text.
   assert.doesNotThrow(() => new Function(source));
   assert.doesNotThrow(() => new Function(`return ${code}`));
 });
 
-test('the marker expression reports the marker it installed', () => {
+test('the marker expression reports the identity it installed', () => {
   const pageId = 'dshpg-abcdef-01234567';
   const sandbox = fakePage('Start');
-  const raw = runInNewContext(titleMarkerExpression(pageId), sandbox);
+  const raw = runInNewContext(pageMarkerExpression(pageId), sandbox);
   const parsed = JSON.parse(raw);
   assert.equal(parsed.pageId, pageId);
-  assert.equal(parsed.title, `Start [${pageId}]`);
+  assert.equal(parsed.title, 'Start');
   const probe = JSON.parse(runInNewContext(probeMarkerExpression, sandbox));
   assert.equal(probe.pageId, pageId);
   assert.equal(probe.url, 'https://example.test/');
@@ -496,25 +418,26 @@ test('the session manager serializes one page and leaves others parallel', async
   assert.deepEqual(nested, ['one', 'two']);
 });
 
-test('discover attributes tabs by session tag even without a registry entry', () => {
+test('discover attributes pages by session tag even without a registry entry', () => {
   const manager = new SessionManager();
   const mine = 'dshpg-aaaaaa-11111111';
   const other = 'dshpg-bbbbbb-22222222';
   manager.register({ pageId: mine, sessionId: 'session-a', url: 'https://mine.test/', source: 'open' });
-  const tabs = [
-    { index: 0, current: false, title: 'App', url: 'dsh-app://app/', text: '- 0: [App](dsh-app://app/)' },
-    { index: 1, current: true, title: `Mine [${mine}]`, url: 'https://mine.test/', text: '' },
-    { index: 2, current: false, title: `Other [${other}]`, url: 'https://other.test/', text: '' },
-    { index: 3, current: false, title: 'Plain', url: 'https://plain.test/', text: '' },
+  const pages = [
+    { index: 0, current: false, closed: false, pageId: null, title: 'App', url: 'dsh-app://app/' },
+    { index: 1, current: true, closed: false, pageId: mine, title: 'Mine', url: 'https://mine.test/' },
+    { index: 2, current: false, closed: false, pageId: other, title: 'Other', url: 'https://other.test/' },
+    { index: 3, current: false, closed: false, pageId: null, title: 'Plain', url: 'https://plain.test/' },
+    { index: 4, current: false, closed: true, pageId: 'dshpg-cccccc-33333333', title: 'Gone', url: 'https://gone.test/' },
   ];
-  const rows = discover({ tabs, manager, sessionId: 'session-a', includeUnclaimed: false });
+  const rows = discover({ pages, manager, sessionId: 'session-a', includeUnclaimed: false });
   assert.equal(rows.length, 2);
   assert.equal(rows[0].mine, true);
   assert.equal(rows[1].mine, false);
-  assert.equal(rows[1].session, `session-tag:${sessionTag('session-b') === 'bbbbbb' ? 'bbbbbb' : 'bbbbbb'}`);
+  assert.equal(rows[1].session, 'session-tag:bbbbbb');
 
   const discoveredOwn = discover({
-    tabs: [{ index: 0, current: false, title: `New [${newPageId('session-a')}]`, url: 'https://x.test/', text: '' }],
+    pages: [{ index: 0, current: false, closed: false, pageId: newPageId('session-a'), title: 'New', url: 'https://x.test/' }],
     manager: new SessionManager(),
     sessionId: 'session-a',
   });

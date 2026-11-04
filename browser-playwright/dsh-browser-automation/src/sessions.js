@@ -1,4 +1,4 @@
-import { extractPageIds, sessionTag } from './page-id.js';
+import { sessionTag } from './page-id.js';
 
 /**
  * In-memory page registry and the per-page mutex.
@@ -97,46 +97,47 @@ export class SessionManager {
  */
 
 /**
- * Merge the in-memory registry with what the live tab list actually shows.
+ * Merge the in-memory registry with what the live page catalog shows.
  *
- * A tab is attributed to a session by the token in its title (the token carries
- * a digest of the owning session), so attribution keeps working for tabs this
- * plugin process never registered — after a plugin reload, or when two DSH
+ * A page is attributed to a session by its in-page identity (the id carries a
+ * digest of the owning session), so attribution keeps working for pages this
+ * Host process never registered — after a plugin reload, or when two DSH
  * windows share one browser.
  *
  * @param {object} input
- * @param {import('./tab-list.js').TabEntry[]} input.tabs
+ * @param {Array<{ index: number, current: boolean, closed: boolean, pageId: string | null, title: string | null, url: string | null }>} input.pages
  * @param {import('./sessions.js').SessionManager} input.manager
- * @param {import('node:crypto').Hash} input.sessionId current DSH session id
+ * @param {string} input.sessionId current DSH session id
  * @param {boolean} [input.includeUnclaimed]
  */
-export function discover({ tabs, manager, sessionId, includeUnclaimed = true }) {
+export function discover({ pages, manager, sessionId, includeUnclaimed = true }) {
   const ownTag = sessionId ? sessionTag(sessionId) : undefined;
   /** @type {Array<Record<string, unknown>>} */
   const rows = [];
-  for (const tab of tabs) {
-    const tokens = extractPageIds(`${tab.title} ${tab.url}`);
-    if (tokens.length === 0) {
+  for (const page of pages) {
+    if (page.closed) continue;
+    const title = page.title ?? '';
+    const url = page.url ?? '';
+    if (!page.pageId) {
       if (!includeUnclaimed) continue;
       rows.push({
-        index: tab.index,
-        current: tab.current,
-        title: tab.title,
-        url: tab.url,
+        index: page.index,
+        current: page.current,
+        title,
+        url,
         pageId: null,
-        session: tab.url.startsWith('dsh-app://') ? 'application' : 'unclaimed',
+        session: url.startsWith('dsh-app://') ? 'application' : 'unclaimed',
       });
       continue;
     }
-    const primary = tokens[0];
-    const record = manager.get(primary);
-    const tag = primary.split('-')[1];
+    const record = manager.get(page.pageId);
+    const tag = page.pageId.split('-')[1];
     rows.push({
-      index: tab.index,
-      current: tab.current,
-      title: tab.title,
-      url: tab.url,
-      pageId: primary,
+      index: page.index,
+      current: page.current,
+      title,
+      url,
+      pageId: page.pageId,
       session: record?.sessionId ?? (tag === ownTag ? sessionId : `session-tag:${tag}`),
       mine: record ? record.sessionId === sessionId : tag === ownTag,
       source: record?.source ?? 'discovered',

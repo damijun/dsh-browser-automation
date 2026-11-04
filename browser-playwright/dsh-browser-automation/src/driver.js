@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { CliError } from './cli.js';
 import { parseTabList, currentIndex, describeTabs } from './tab-list.js';
-import { titleMarkerExpression, probeMarkerExpression, installMarkerCode, extractPageIds } from './page-id.js';
+import { pageMarkerExpression, probeMarkerExpression, installMarkerCode } from './page-id.js';
 import { PAGE_CATALOG_CODE, parsePageCatalog, describeCatalog } from './page-catalog.js';
 
 /**
@@ -63,10 +63,10 @@ export function actionOutput(stdout) {
  * @typedef {object} ResolvedTab
  * @property {number} index     tab-list index, valid for this call only
  * @property {boolean} current  the daemon's current tab (`candidate === page`)
- * @property {string} title     document.title, marker included
+ * @property {string} title     document.title, exactly as the page sets it
  * @property {string} url       location.href, post-redirect
  * @property {string} [pageId]  the in-page identity, when the tab came from a resolve
- * @property {'page' | 'title' | null} [addressedBy] primary identity vs title fallback
+ * @property {'page' | null} [addressedBy] whether the in-page identity found it
  */
 
 /**
@@ -84,7 +84,6 @@ export class PageDriver {
    * @param {import('./cli.js').CliBridge} cli
    * @param {object} options
    * @param {string} [options.cdpUrl] endpoint to attach to; set before any attach runs
-   * @param {{ badge?: boolean }} [options.marker] page marker/badge defaults
    * @param {(message: string) => void} [options.log]
    */
   constructor(cli, options) {
@@ -95,9 +94,6 @@ export class PageDriver {
     this.attachTimeoutMs = Number(options.attachTimeoutMs ?? 60_000);
     this.screenshotTimeoutMs = Number(options.screenshotTimeoutMs ?? 25_000);
     this.log = options.log ?? (() => {});
-    // Read once at construction: the config is a boot snapshot by design, and the
-    // badge is painted by every marker (re)application, including after navigation.
-    this.marker = options.marker && typeof options.marker === 'object' ? options.marker : {};
     this.attached = false;
     // The daemon has one global "current tab"; every select+command pair must be
     // serialized against every other one. See withCli().
@@ -206,16 +202,15 @@ export class PageDriver {
   /**
    * pageId -> tab-list index, in one `run-code`.
    *
-   * The in-page identity (`window.__dshBrowserAutomation.pageId`) is the primary
-   * source. The title marker is read as a *reported* fallback for pages that predate
-   * this version or whose init script was rejected — never as a silent second attempt
-   * (the caller sees `addressedBy` and the log line).
+   * The in-page identity (`window.__dshBrowserAutomation.pageId`) is the only
+   * source: nothing is written into the title or any other rendered field, so
+   * there is no second place to look.
    *
    * Per §4.6 of the migration plan the first match wins: no collecting, no
    * AMBIGUOUS_PAGE, no failing on a theoretical duplicate.
    *
    * @param {string} pageId
-   * @returns {Promise<ResolvedTab & { pageId: string, addressedBy: 'page' | 'title' }>}
+   * @returns {Promise<ResolvedTab & { pageId: string, addressedBy: 'page' }>}
    */
   async resolveTabIndex(pageId) {
     const catalog = await this.catalog();
@@ -230,20 +225,6 @@ export class PageDriver {
         addressedBy: 'page',
       };
     }
-    const legacy = catalog.find(
-      (entry) => !entry.closed && extractPageIds(String(entry.title ?? '')).includes(pageId),
-    );
-    if (legacy) {
-      this.log(`page ${pageId} has no in-page identity; using the title marker at index ${legacy.index}`);
-      return {
-        index: legacy.index,
-        current: legacy.current,
-        title: legacy.title ?? '',
-        url: legacy.url ?? '',
-        pageId,
-        addressedBy: 'title',
-      };
-    }
     throw new CliError(
       `PAGE_NOT_FOUND: no open page carries ${pageId}. Open pages: ${describeCatalog(catalog)}.\n` +
         'If the tab is still visible, the page may have been reloaded without the plugin identity: ' +
@@ -256,7 +237,7 @@ export class PageDriver {
    * tab-list index -> pageId, in one `run-code` (the reverse of {@link resolveTabIndex}).
    *
    * @param {number} tabIndex
-   * @returns {Promise<{ pageId: string | null, index: number, title: string, url: string, addressedBy: 'page' | 'title' | null }>}
+   * @returns {Promise<{ pageId: string | null, index: number, title: string, url: string, addressedBy: 'page' | null }>}
    */
   async resolvePageId(tabIndex) {
     if (!Number.isInteger(tabIndex) || tabIndex < 0) {
@@ -273,13 +254,12 @@ export class PageDriver {
     if (entry.closed) {
       throw new CliError(`PAGE_CLOSED: tab ${tabIndex} (${entry.url ?? '?'}) was closed.`, { code: 'PAGE_CLOSED' });
     }
-    const fromTitle = extractPageIds(String(entry.title ?? ''))[0] ?? null;
     return {
-      pageId: entry.pageId ?? fromTitle,
+      pageId: entry.pageId ?? null,
       index: tabIndex,
       title: entry.title ?? '',
       url: entry.url ?? '',
-      addressedBy: entry.pageId ? 'page' : fromTitle ? 'title' : null,
+      addressedBy: entry.pageId ? 'page' : null,
     };
   }
 
@@ -389,26 +369,26 @@ export class PageDriver {
   }
 
   /**
-   * Append the page marker, replacing any marker from a previous claim, and keep
-   * it attached across the page's own title rewrites.
+   * Install the page identity in the current document.
    *
-   * The marker is written for `tab.pageId`, so the tab has to carry one (the resolve
-   * functions set it; `browser_open`/`browser_claim` hand one in after minting).
+   * Replaces any identity installed by a previous claim. The marker is written
+   * for `tab.pageId`, so the tab has to carry one (the resolve functions set it;
+   * `browser_open`/`browser_claim` hand one in after minting).
    *
    * @param {ResolvedTab & { pageId: string }} tab
    * @returns {Promise<{ title?: string, url?: string } | undefined>}
    */
   async mark(tab) {
     return this.executeOnResolvedTab(tab, async () => {
-      const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(tab.pageId, this.marker)]);
+      const { stdout } = await this.cli.run(['--raw', 'eval', pageMarkerExpression(tab.pageId)]);
       return parseMarkerOutput(stdout);
     });
   }
 
   /**
-   * Install the marker durably and apply it to the current document.
+   * Install the identity durably and apply it to the current document.
    *
-   * The init script makes the marker survive every later navigation; the eval
+   * The init script makes the identity survive every later navigation; the eval
    * covers the document that is already loaded (an init script only runs on the
    * next one). Two CLI calls, paid once per open/claim.
    *
@@ -417,8 +397,8 @@ export class PageDriver {
    */
   async installMarker(tab) {
     return this.executeOnResolvedTab(tab, async () => {
-      await this.cli.run(['--raw', 'run-code', installMarkerCode(tab.pageId, this.marker)], { timeoutMs: 60_000 });
-      const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(tab.pageId, this.marker)]);
+      await this.cli.run(['--raw', 'run-code', installMarkerCode(tab.pageId)], { timeoutMs: 60_000 });
+      const { stdout } = await this.cli.run(['--raw', 'eval', pageMarkerExpression(tab.pageId)]);
       return parseMarkerOutput(stdout);
     });
   }
@@ -532,9 +512,12 @@ export class PageDriver {
   }
 
   /**
-   * Navigate a resolved tab, then restore the marker: a navigation destroys the
-   * observer and the page's own title rewrite would drop the marker, so the marker is
-   * re-applied and reported back.
+   * Navigate a resolved tab, then re-install and report the identity.
+   *
+   * A navigation creates a new document; the init script re-installs the field
+   * there, and this one eval also reports the resulting title and URL (and covers
+   * the case where the init script was rejected and the marker had to be applied
+   * one-shot).
    *
    * @param {ResolvedTab & { pageId?: string }} tab
    * @param {{ url: string }} options
@@ -542,7 +525,7 @@ export class PageDriver {
   async goto(tab, options) {
     return this.executeOnResolvedTab(tab, async () => {
       await this.cli.run(['--raw', 'goto', options.url], { timeoutMs: 60_000 });
-      const { stdout } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(tab.pageId, this.marker)], {
+      const { stdout } = await this.cli.run(['--raw', 'eval', pageMarkerExpression(tab.pageId)], {
         retries: 1,
       });
       const parsed = parseEvalOutput(stdout);
@@ -589,9 +572,8 @@ export class PageDriver {
   /**
    * Run a Playwright snippet against a resolved tab.
    *
-   * The snippet may rewrite the document (`page.setContent`) or replace its head,
-   * which discards the marker without any navigation that would re-run the init
-   * script. Re-applying it here keeps the pageId resolvable.
+   * The snippet may navigate or replace the document, so the identity is
+   * re-installed afterwards; the same eval reports the resulting title and URL.
    *
    * @param {ResolvedTab & { pageId?: string }} tab
    * @param {{ code: string }} options
@@ -600,7 +582,7 @@ export class PageDriver {
     return this.executeOnResolvedTab(tab, async () => {
       const { stdout } = await this.cli.run(['--raw', 'run-code', options.code], { timeoutMs: 120_000 });
       const output = stdout.trim();
-      const { stdout: marked } = await this.cli.run(['--raw', 'eval', titleMarkerExpression(tab.pageId, this.marker)]);
+      const { stdout: marked } = await this.cli.run(['--raw', 'eval', pageMarkerExpression(tab.pageId)]);
       const marker = parseMarkerOutput(marked);
       return { output, title: marker?.title, url: marker?.url };
     });

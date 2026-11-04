@@ -15,6 +15,7 @@ const PAGE_ID = 'dshpg-abcdef-01234567';
 function harness({ plan, hidden = false }) {
   const runtime = new Runtime({ config: { screenshotSettleMs: 0 } });
   const calls = [];
+  const prepare = [];
   const cli = {
     plan: undefined,
     workdir: () => os.tmpdir(),
@@ -23,7 +24,7 @@ function harness({ plan, hidden = false }) {
   runtime.cli = cli;
   runtime.driver = {
     cli,
-    resolvePage: async () => ({ index: 1, current: false, title: `Title [${PAGE_ID}]`, url: 'https://a.test/' }),
+    resolvePage: async () => ({ index: 1, current: false, title: 'Title', url: 'https://a.test/' }),
     screenshot: async () => {
       calls.push(['plain']);
       return { path: 'plain.png' };
@@ -38,9 +39,12 @@ function harness({ plan, hidden = false }) {
     clientState: () => 'live',
     hasClient: () => true,
     caps: () => ({ hidden: hidden === true }),
-    request: async (kind) => (kind === 'prepare-capture' ? plan : {}),
+    request: async (kind, payload) => {
+      if (kind === 'prepare-capture') prepare.push(payload);
+      return kind === 'prepare-capture' ? plan : {};
+    },
   };
-  return { runtime, calls };
+  return { runtime, calls, prepare };
 }
 
 test('a visible page is captured with the CLI command', async () => {
@@ -77,6 +81,19 @@ test('without a tab id the plugin does not pretend to have focused anything', as
   await runtime.screenshot({ pageId: PAGE_ID });
   // No focus happened, so the plain path (and its error hint) applies.
   assert.deepEqual(calls, [['plain']]);
+});
+
+test('prepare-capture carries the stored sidebar tab id for the page', async () => {
+  const { runtime, prepare } = harness({ plan: { visible: true, tabId: 'tab7' } });
+  runtime.manager.register({
+    pageId: PAGE_ID,
+    sessionId: 's1',
+    url: 'https://a.test/',
+    source: 'open',
+    tabId: 'tab7',
+  });
+  await runtime.screenshot({ pageId: PAGE_ID });
+  assert.deepEqual(prepare[0], { pageId: PAGE_ID, tabId: 'tab7', url: 'https://a.test/' });
 });
 
 test('a dead bridge still allows the cheap path', async () => {

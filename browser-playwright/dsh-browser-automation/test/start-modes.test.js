@@ -31,8 +31,8 @@ function liveBridge(caps) {
   };
 }
 
-/** A Runtime with the CLI and tab listing stubbed out, so only the logic runs. */
-function harness({ bridge, tabs = [], marker = 'Marked' }) {
+/** A Runtime with the CLI, tab listing and page catalog stubbed out, so only the logic runs. */
+function harness({ bridge, tabs = [], pages }) {
   const runtime = new Runtime({ config: {} });
   runtime.bridge = bridge;
   const cliCalls = [];
@@ -46,14 +46,29 @@ function harness({ bridge, tabs = [], marker = 'Marked' }) {
   runtime.cli = cli;
   // A truthy driver keeps `ensureDriver()` from building a real CliBridge (and
   // therefore from shelling out to playwright-cli during a unit test).
-  runtime.driver = { cli, listTabs: async () => ({ tabs, ignored: [] }) };
+  const catalog =
+    pages ??
+    tabs.map((entry) => ({
+      index: entry.index,
+      current: entry.current === true,
+      closed: false,
+      pageId: null,
+      title: entry.title,
+      url: entry.url,
+    }));
+  runtime.driver = {
+    cli,
+    listTabs: async () => ({ tabs, ignored: [] }),
+    catalog: async () => catalog,
+  };
   runtime.attach = async () => ({ tabs, ignored: [] });
   // The real installer selects the tab itself, inside the driver's CLI lock, so the
   // contract worth asserting is "which tab was handed to it" — not a raw tab-select.
   const marked = [];
   runtime.injectMarker = async (target) => {
     marked.push({ index: target.index, url: target.url, pageId: target.pageId });
-    return { title: `${marker} [${target.pageId}]`, url: target.url };
+    // The marker only writes the in-page identity; the page's title is untouched.
+    return { title: target.title, url: target.url };
   };
   return { runtime, cliCalls, marked };
 }
@@ -123,6 +138,25 @@ test('browser_list stays quiet when the CLI does list a web page', async () => {
   assert.equal(result.warning, undefined);
 });
 
+test('browser_list names pages from the page catalog', async () => {
+  const pageId = 'dshpg-aaaaaa-11111111';
+  const pages = [{ index: 1, current: true, closed: false, pageId, title: 'Page', url: 'https://a.test/' }];
+  const bridge = liveBridge({ visibleUrl: 'https://a.test/', activeTabId: 'tab7' });
+  const { runtime } = harness({ bridge, tabs: [tab(1, 'https://a.test/', 'Page', true)], pages });
+  runtime.manager.register({
+    pageId,
+    sessionId: 's1',
+    url: 'https://a.test/',
+    title: 'Page',
+    source: 'open',
+    tabId: 'tab7',
+  });
+  const result = await runtime.listPages({ sessionId: 's1' });
+  assert.equal(result.count, 1);
+  assert.equal(result.pages[0].pageId, pageId);
+  assert.equal(result.pages[0].mine, true);
+});
+
 test('claim fails with the sidebar instruction when no page is visible', async () => {
   const bridge = liveBridge({ visibleUrl: null, activeTabId: null });
   const { runtime } = harness({ bridge, tabs: [tab(1, 'https://a.test/', 'A')] });
@@ -161,21 +195,25 @@ test('claim fails when the visible page is not in the CLI tab list yet', async (
 });
 
 test('claim takes over the visible page even when the CLI current tab is elsewhere', async () => {
-  const pageId = 'dshpg-abcdef-01234567';
   const oldPageId = 'dshpg-111111-22222222';
   const bridge = liveBridge({ visibleUrl: 'https://visible.test/x', activeTabId: 'tab7' });
   const tabs = [
     tab(0, 'dsh-app://app/', 'DSH', true),
-    tab(1, `https://other.test/ [${oldPageId}]`, 'Other'),
+    tab(1, 'https://other.test/', 'Other'),
     tab(2, 'https://visible.test/x', 'Visible'),
   ];
-  const { runtime, cliCalls, marked } = harness({ bridge, tabs, marker: 'Visible page' });
+  const pages = [
+    { index: 0, current: true, closed: false, pageId: null, title: 'DSH', url: 'dsh-app://app/' },
+    { index: 1, current: false, closed: false, pageId: oldPageId, title: 'Other', url: 'https://other.test/' },
+    { index: 2, current: false, closed: false, pageId: null, title: 'Visible', url: 'https://visible.test/x' },
+  ];
+  const { runtime, cliCalls, marked } = harness({ bridge, tabs, pages });
   runtime.manager.register({ pageId: oldPageId, sessionId: 's1', url: 'https://other.test/', source: 'open' });
 
   const claimed = await runtime.claimPage({ sessionId: 's1' });
   assert.match(claimed.pageId, /^dshpg-[0-9a-f]{6}-[0-9a-f]{8}$/);
   assert.equal(claimed.url, 'https://visible.test/x');
-  // The returned title is the tab's own title before the marker was installed.
+  // The page's own title is returned untouched.
   assert.equal(claimed.title, 'Visible');
   assert.equal(claimed.replacedExistingPageId, undefined);
   // Claiming hands the visible tab (index 2) to the installer, which selects it under
@@ -188,11 +226,14 @@ test('claim takes over the visible page even when the CLI current tab is elsewhe
   assert.equal(runtime.manager.get(claimed.pageId).tabId, 'tab7');
 });
 
-test('claim replaces a previous marker and unregisters the old pageId', async () => {
+test('claim replaces the page id found in the catalog and unregisters the old handle', async () => {
   const oldPageId = 'dshpg-111111-22222222';
   const bridge = liveBridge({ visibleUrl: 'https://visible.test/x', activeTabId: 'tab7' });
-  const tabs = [tab(1, 'https://visible.test/x', `Visible page [${oldPageId}]`)];
-  const { runtime } = harness({ bridge, tabs, marker: 'Visible page' });
+  const tabs = [tab(1, 'https://visible.test/x', 'Visible page')];
+  const pages = [
+    { index: 1, current: false, closed: false, pageId: oldPageId, title: 'Visible page', url: 'https://visible.test/x' },
+  ];
+  const { runtime } = harness({ bridge, tabs, pages });
   runtime.manager.register({ pageId: oldPageId, sessionId: 's1', url: 'https://visible.test/x', source: 'open' });
 
   const claimed = await runtime.claimPage({ sessionId: 's1' });

@@ -4,7 +4,7 @@
  * Real samples (verified against playwright-cli 0.1.22 with `--raw`):
  *
  *   - 0: (current) [Example Domain](https://example.com/)
- *   - 0: [A [b] (c) - pageId-s1-ab12cd34](https://example.com/)
+ *   - 0: [A [b] (c)](https://example.com/)
  *   - 1: [Example Domain](https://example.org/)
  *
  * The format is a markdown list served by playwright's own output helper, so a
@@ -12,6 +12,9 @@
  * the line; the index is the list number and is the only thing `tab-select`
  * accepts. Everything here is pure and synchronous so it can be unit tested
  * against captured text.
+ *
+ * This module parses what playwright-cli prints; it does not identify pages.
+ * Identity comes from the in-page field (see page-catalog.js).
  *
  * @typedef {object} TabEntry
  * @property {number} index       zero-based tab index as printed by tab-list
@@ -83,63 +86,6 @@ export function parseTabList(output) {
     tabs.push({ index, current, title: link.title, url: link.url, text: rawLine });
   }
   return { tabs, ignored };
-}
-
-/**
- * Find the single tab whose title or URL contains `pageId`.
- *
- * Matching is a plain substring test on purpose: the marker is an opaque ASCII
- * token, and a regex over the whole line would have to re-derive the markdown
- * escaping rules this module exists to avoid.
- *
- * @param {TabEntry[]} tabs
- * @param {string} pageId
- * @returns {TabEntry[]} every match, in tab order
- */
-export function matchPage(tabs, pageId) {
-  if (!pageId) return [];
-  return tabs.filter((tab) => tab.title.includes(pageId) || tab.url.includes(pageId));
-}
-
-/**
- * Resolve one page id to exactly one tab index.
- *
- * @param {string} output            raw tab-list text
- * @param {string} pageId
- * @returns {{ index: number, title: string, url: string, current: boolean, tabs: TabEntry[] }}
- * @throws {Error} `code: 'PAGE_NOT_FOUND'` or `code: 'AMBIGUOUS_PAGE'`
- */
-export function resolveIndex(output, pageId) {
-  const { tabs } = parseTabList(output);
-  const matches = matchPage(tabs, pageId);
-  if (matches.length === 1) {
-    const [tab] = matches;
-    return { index: tab.index, title: tab.title, url: tab.url, current: tab.current, tabs };
-  }
-  if (matches.length === 0) {
-    const visible = tabs.filter((tab) => /^https?:/i.test(tab.url));
-    const error = new Error(
-      `pageId ${pageId} is not present in playwright-cli's tab list ` +
-        `(${tabs.length} tab(s) visible, ${visible.length} of them web pages). ` +
-        'The tab may have been closed by the user, the page may have navigated before the marker was ' +
-        're-applied, or the CLI may have been detached (detach ends the automation session). ' +
-        'Call browser_list to see what is reachable, then browser_open or browser_claim.',
-    );
-    Object.assign(error, { code: 'PAGE_NOT_FOUND', pageId, tabs });
-    throw error;
-  }
-  const error = new Error(
-    `pageId ${pageId} matched ${matches.length} tabs (indices ${matches
-      .map((tab) => tab.index)
-      .join(', ')}); refusing to guess.`,
-  );
-  Object.assign(error, {
-    code: 'AMBIGUOUS_PAGE',
-    pageId,
-    matches: matches.map((tab) => ({ index: tab.index, title: tab.title, url: tab.url })),
-    tabs,
-  });
-  throw error;
 }
 
 /**

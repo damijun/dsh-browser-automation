@@ -27,6 +27,30 @@ function harness(options = {}) {
   const longTimers = [];
   const disposers = [];
 
+  /** The carrier `<webview>` objects every selector returns, built once per call. */
+  const views = () =>
+    (
+      options.webviews ?? [
+        { title: 'Hidden page', url: 'https://hidden.test/', width: 0, height: 0 },
+        { title: 'Visible page', url: 'https://visible.test/page', width: 800, height: 600 },
+      ]
+    ).map((view) => ({
+      getTitle: () => view.title,
+      getURL: () => view.url,
+      getBoundingClientRect: () => {
+        const x = view.x ?? 0;
+        const y = view.y ?? 0;
+        return {
+          width: view.width,
+          height: view.height,
+          left: x,
+          top: y,
+          right: x + view.width,
+          bottom: y + view.height,
+        };
+      },
+    }));
+
   const sandbox = {
     window: {
       __ModuleLoader__: {
@@ -44,37 +68,20 @@ function harness(options = {}) {
     },
     // One document object, as in a real page: baseURI plus the carriers and the
     // tab strip chips. Two webviews, one hidden (zero box), so "is this page
-    // visible" has a real choice to make.
+    // visible" has a real choice to make. A chip is a tab container: it exposes the
+    // sidebar's own tab id and the webview it holds (matched by URL in this harness).
     document: {
       baseURI: 'dsh-app://app/',
       querySelectorAll: (selector) => {
-        if (selector === 'webview') {
-          return (
-            options.webviews ?? [
-              { title: 'Hidden page [dshpg-aaaaaa-00000001]', url: 'https://hidden.test/', width: 0, height: 0 },
-              { title: 'Visible page', url: 'https://visible.test/page', width: 800, height: 600 },
-            ]
-          ).map((view) => ({
-            getTitle: () => view.title,
-            getURL: () => view.url,
-            getBoundingClientRect: () => {
-              const x = view.x ?? 0;
-              const y = view.y ?? 0;
-              return {
-                width: view.width,
-                height: view.height,
-                left: x,
-                top: y,
-                right: x + view.width,
-                bottom: y + view.height,
-              };
-            },
-          }));
-        }
+        if (selector === 'webview') return views();
         if (selector === '[data-sidebar-right-tab]') {
           return (options.chips ?? []).map((chip) => ({
-            getAttribute: () => chip.tabId,
-            textContent: chip.text,
+            getAttribute: (name) => (name === 'data-sidebar-right-tab' ? chip.tabId : null),
+            textContent: chip.text ?? '',
+            querySelector: (inner) => {
+              if (inner !== 'webview') return null;
+              return views().find((view) => view.getURL() === chip.url) ?? null;
+            },
           }));
         }
         return [];
@@ -321,7 +328,9 @@ function captureHarness(options) {
         delivered = true;
         return {
           ok: true,
-          value: { command: { requestId: 'r3', kind: 'prepare-capture', pageId: 'dshpg-aaaaaa-00000001' } },
+          value: {
+            command: { requestId: 'r3', kind: 'prepare-capture', ...(options.command ?? {}) },
+          },
         };
       }
       return { ok: true, value: { command: null } };
@@ -331,8 +340,9 @@ function captureHarness(options) {
 
 test('prepare-capture does nothing when the page is already visible', async () => {
   const { requests, start, stop } = captureHarness({
-    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 573, height: 916 }],
-    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+    command: { tabId: 'tab7', url: 'https://a.test/' },
+    webviews: [{ url: 'https://a.test/', width: 573, height: 916 }],
+    chips: [{ tabId: 'tab7', url: 'https://a.test/', text: 'Page' }],
   });
   const { calls } = start();
   await settle(80);
@@ -345,12 +355,13 @@ test('prepare-capture does nothing when the page is already visible', async () =
   assert.deepEqual(calls, [], 'a visible page must not be focused or expanded');
 });
 
-test('prepare-capture brings a hidden page to the front by its chip', async () => {
+test('prepare-capture brings a hidden page to the front by its tab id', async () => {
   const { requests, start, stop } = captureHarness({
-    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 0, height: 0 }],
+    command: { tabId: 'tab7', url: 'https://a.test/' },
+    webviews: [{ url: 'https://a.test/', width: 0, height: 0 }],
     chips: [
-      { tabId: 'tab6', text: 'Other page [dshpg-aaaaaa-00000009]' },
-      { tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' },
+      { tabId: 'tab6', url: 'https://other.test/', text: 'Other page' },
+      { tabId: 'tab7', url: 'https://a.test/', text: 'Page' },
     ],
   });
   const { calls } = start();
@@ -365,10 +376,11 @@ test('prepare-capture brings a hidden page to the front by its chip', async () =
   assert.equal(value.expandVia, null);
 });
 
-test('prepare-capture expands a collapsed sidebar before looking for the chip', async () => {
+test('prepare-capture expands a collapsed sidebar before focusing the tab', async () => {
   const { requests, start, stop } = captureHarness({
-    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 0, height: 0 }],
-    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+    command: { tabId: 'tab7', url: 'https://a.test/' },
+    webviews: [{ url: 'https://a.test/', width: 0, height: 0 }],
+    chips: [{ tabId: 'tab7', url: 'https://a.test/', text: 'Page' }],
     expanded: false,
   });
   const { calls } = start();
@@ -383,8 +395,9 @@ test('prepare-capture expands a collapsed sidebar before looking for the chip', 
 
 test('prepare-capture falls back to layout.openRightbar when the toggle throws', async () => {
   const { requests, start, stop } = captureHarness({
-    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 0, height: 0 }],
-    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+    command: { tabId: 'tab7', url: 'https://a.test/' },
+    webviews: [{ url: 'https://a.test/', width: 0, height: 0 }],
+    chips: [{ tabId: 'tab7', url: 'https://a.test/', text: 'Page' }],
     expanded: false,
     toggleExpanded: () => {
       throw new Error('no session surface is mounted');
@@ -413,7 +426,7 @@ function closeHarness(options) {
         delivered = true;
         return {
           ok: true,
-          value: { command: { requestId: 'r4', kind: 'close-page', pageId: 'dshpg-aaaaaa-00000001' } },
+          value: { command: { requestId: 'r4', kind: 'close-page', ...(options.command ?? {}) } },
         };
       }
       return { ok: true, value: { command: null } };
@@ -423,7 +436,8 @@ function closeHarness(options) {
 
 test('close-page removes the tab through the sidebar controller', async () => {
   const { requests, start, stop } = closeHarness({
-    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+    command: { tabId: 'tab7', url: 'https://a.test/' },
+    chips: [{ tabId: 'tab7', url: 'https://a.test/', text: 'Page' }],
   });
   const { calls } = start();
   await settle(80);
@@ -436,7 +450,10 @@ test('close-page removes the tab through the sidebar controller', async () => {
 });
 
 test('close-page reports why it could not find the tab', async () => {
-  const { requests, start, stop } = closeHarness({ chips: [] });
+  const { requests, start, stop } = closeHarness({
+    command: { tabId: '', url: 'https://missing.test/' },
+    chips: [],
+  });
   const { calls } = start();
   await settle(80);
   stop();
@@ -444,7 +461,7 @@ test('close-page reports why it could not find the tab', async () => {
   assert.deepEqual(calls, []);
   const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
   assert.equal(value.closed, false);
-  assert.match(value.reason, /no sidebar tab chip carries this page/);
+  assert.match(value.reason, /no sidebar tab matches this page/);
 });
 
 /** A collapsed panel slides the whole column out of the viewport while its content
@@ -453,12 +470,11 @@ test('close-page reports why it could not find the tab', async () => {
  */
 test('a carrier box outside the viewport counts as hidden', async () => {
   const { requests, start, stop } = captureHarness({
+    command: { tabId: 'tab7', url: 'https://a.test/' },
     innerWidth: 958,
     innerHeight: 1031,
-    webviews: [
-      { title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 430, height: 915, x: 959, y: 116 },
-    ],
-    chips: [{ tabId: 'tab7', text: 'Page [dshpg-aaaaaa-00000001]' }],
+    webviews: [{ url: 'https://a.test/', width: 430, height: 915, x: 959, y: 116 }],
+    chips: [{ tabId: 'tab7', url: 'https://a.test/', text: 'Page' }],
     expanded: false,
   });
   const { calls } = start();
@@ -470,9 +486,10 @@ test('a carrier box outside the viewport counts as hidden', async () => {
   assert.equal(value.visible, false, 'an off-viewport box is not visible');
 });
 
-test('prepare-capture reports honestly when no chip carries the page', async () => {
+test('prepare-capture reports honestly when no tab matches the page', async () => {
   const { requests, start, stop } = captureHarness({
-    webviews: [{ title: 'Page [dshpg-aaaaaa-00000001]', url: 'https://a.test/', width: 0, height: 0 }],
+    command: { tabId: '', url: 'https://missing.test/' },
+    webviews: [{ url: 'https://a.test/', width: 0, height: 0 }],
     chips: [],
   });
   const { calls } = start();

@@ -82,6 +82,15 @@ test('the shared badge is an overlay registration, not a page patch', async () =
   assert.match(source, /pointerEvents: 'none'/);
 });
 
+test('the shared badge asks the Host instead of parsing a page title', async () => {
+  // The page title no longer carries an identity; the badge uses the sidebar's own tab
+  // id (and the URL) and lets the Host answer from its registry.
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8');
+  assert.match(source, /call\('shared-state'/);
+  assert.doesNotMatch(source, /getTitle\(/);
+  assert.doesNotMatch(source, /dshpg-\[0-9a-f\]/);
+});
+
 test('the shared badge follows tab switches by event, with only a slow safety tick', async () => {
   // A 250ms poll cost ~0.3ms/s of layout work; switches are observable through the pane
   // size (0x0 <-> real box) and through the sidebar's DOM churn, so the badge uses those.

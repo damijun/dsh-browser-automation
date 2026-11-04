@@ -14,10 +14,10 @@
  *     environment (Electron webviews, 4 tabs, app page at index 0); the migration plan
  *     (docs/run-code-migration-plan.md) records the same contract from an Edge test.
  *   - the identity is `window.__dshBrowserAutomation.pageId`, written by the init
- *     script, so it survives navigation and does not depend on the title marker.
+ *     script, so it survives navigation.
  *
- * The title is still read, but only as a compatibility/diagnostic fallback (§3.3 of
- * the plan: the marker stays until every tool uses the in-page identity).
+ * The title is read for display only: it is what the page itself calls itself, and it
+ * carries no marker.
  *
  * Nothing here caches: an index is valid for one call only, because the user can close
  * or reorder tabs at any moment.

@@ -13,8 +13,7 @@ import { parsePageCatalog, describeCatalog, PAGE_CATALOG_CODE } from '../src/pag
  *
  * The index is only meaningful for one call, so every test asserts that the catalog is
  * re-read rather than cached. Per §4.6 the first match wins and a duplicate never
- * becomes an error; per §3.3 the title marker is a *reported* fallback, not a silent
- * second attempt.
+ * becomes an error. The in-page identity is the only source: the title is never read.
  */
 
 const ID_A = 'dshpg-aaaaaa-11111111';
@@ -42,8 +41,8 @@ function driverWith(entries, overrides = {}) {
 
 const THREE_PAGES = [
   { index: 0, current: false, closed: false, pageId: null, title: 'App', url: 'dsh-app://app/' },
-  { index: 1, current: true, closed: false, pageId: ID_A, title: `Page A [${ID_A}]`, url: 'https://a.test/' },
-  { index: 2, current: false, closed: false, pageId: ID_B, title: `Page B [${ID_B}]`, url: 'https://b.test/' },
+  { index: 1, current: true, closed: false, pageId: ID_A, title: 'Page A', url: 'https://a.test/' },
+  { index: 2, current: false, closed: false, pageId: ID_B, title: 'Page B', url: 'https://b.test/' },
 ];
 
 test('the catalog parser accepts the double-encoded run-code output', () => {
@@ -54,7 +53,7 @@ test('the catalog parser accepts the double-encoded run-code output', () => {
     current: true,
     closed: false,
     pageId: ID_A,
-    title: `Page A [${ID_A}]`,
+    title: 'Page A',
     url: 'https://a.test/',
   });
   // A plain array (CLI printed the value directly) parses too.
@@ -84,14 +83,15 @@ test('pageId -> index uses the in-page identity, not the title', async () => {
   assert.equal(hit.addressedBy, 'page');
 });
 
-test('the title marker is a reported fallback, and the log says so', async () => {
-  const legacy = THREE_PAGES.map((entry) => (entry.pageId === ID_A ? { ...entry, pageId: null } : entry));
-  const logged = [];
-  const driver = driverWith(legacy, { log: (message) => logged.push(message) });
-  const hit = await driver.resolveTabIndex(ID_A);
-  assert.equal(hit.index, 1);
-  assert.equal(hit.addressedBy, 'title');
-  assert.match(logged.join('\n'), /no in-page identity; using the title marker at index 1/);
+test('a page without the in-page identity is not resolved from its title', async () => {
+  const legacy = THREE_PAGES.map((entry) =>
+    entry.pageId === ID_A ? { ...entry, pageId: null, title: `Page A [${ID_A}]` } : entry,
+  );
+  const driver = driverWith(legacy);
+  await assert.rejects(() => driver.resolveTabIndex(ID_A), (error) => {
+    assert.equal(error.code, 'PAGE_NOT_FOUND');
+    return true;
+  });
 });
 
 test('a missing page fails with PAGE_NOT_FOUND and the open-pages list', async () => {
@@ -111,16 +111,16 @@ test('a closed page is skipped even if its identity matches', async () => {
   assert.equal(hit.index, 2, 'the live copy wins, the closed duplicate is ignored');
 });
 
-test('index -> pageId reads the in-page identity, then the title marker', async () => {
+test('index -> pageId reads only the in-page identity', async () => {
   const driver = driverWith(THREE_PAGES);
   const second = await driver.resolvePageId(2);
   assert.equal(second.pageId, ID_B);
   assert.equal(second.addressedBy, 'page');
 
   const legacy = THREE_PAGES.map((entry) => (entry.pageId === ID_A ? { ...entry, pageId: null } : entry));
-  const viaTitle = await driverWith(legacy).resolvePageId(1);
-  assert.equal(viaTitle.pageId, ID_A);
-  assert.equal(viaTitle.addressedBy, 'title');
+  const unmarked = await driverWith(legacy).resolvePageId(1);
+  assert.equal(unmarked.pageId, null);
+  assert.equal(unmarked.addressedBy, null);
 });
 
 test('index -> pageId rejects a bad index and a closed tab', async () => {
