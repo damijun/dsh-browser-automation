@@ -355,6 +355,7 @@ test('the marker expression reports the marker it installed', () => {
 
 function fakePage(initialTitle) {
   let observer;
+  let retryCallback;
   const sandbox = {
     document: { title: initialTitle, head: {} },
     location: { href: 'https://example.test/' },
@@ -371,13 +372,20 @@ function fakePage(initialTitle) {
     },
     setTimeout,
     clearTimeout,
-    // The real script retries briefly for late <title> elements; the sandbox has
-    // no need for that timer, and an un-cleared interval would keep node alive.
-    setInterval: () => 0,
-    clearInterval: () => {},
+    // The real script retries briefly for late <title> elements; capture the timer
+    // callback so a test can prove it terminates, and return a truthy id.
+    setInterval: (callback) => {
+      retryCallback = callback;
+      return 1;
+    },
+    clearInterval: () => {
+      sandbox.retryCleared = true;
+    },
     JSON,
     String,
   };
+  sandbox.retryCleared = false;
+  sandbox.fireRetry = () => retryCallback?.();
   sandbox.fireMutation = () => observer?.callback();
   return sandbox;
 }
@@ -404,6 +412,20 @@ test('the marker expression paints the shared badge, unless it is disabled', () 
   assert.doesNotMatch(off, /__dsh-ba-shared__/);
   const parsed = JSON.parse(runInNewContext(off, fakePage('Start')));
   assert.equal(parsed.badge, false);
+});
+
+test('the badge-off retry loop neither throws nor keeps running', () => {
+  // Regression: the badge-off branch did not define ensureBadge, so every 100ms
+  // tick threw a ReferenceError before `++tries` — the interval never cleared and
+  // every marker application added another one (the renderer log grew without end).
+  const pageId = 'dshpg-abcdef-01234567';
+  const sandbox = fakePage('Start');
+  runInNewContext(titleMarkerExpression(pageId, { badge: false }), sandbox);
+  assert.equal(typeof sandbox.fireRetry, 'function', 'the retry loop was never scheduled');
+  assert.doesNotThrow(() => {
+    for (let tick = 0; tick < 45; tick += 1) sandbox.fireRetry();
+  });
+  assert.ok(sandbox.retryCleared, 'the retry interval must clear itself');
 });
 
 test('the durable marker installer injects the same script through addInitScript', () => {

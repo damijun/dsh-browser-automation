@@ -151,7 +151,14 @@ export function titleMarkerExpression(pageId, options = {}) {
         '  ensureBadge();',
         '  const badgePresent = () => { try { return Boolean(document.getElementById(BADGE_ID)); } catch (error) { return null; } };',
       ]
-    : ['  const dropBadge = () => {};', '  const badgePresent = () => false;'];
+    : [
+        '  const dropBadge = () => {};',
+        // The retry loop below calls ensureBadge() unconditionally, so the badge-off
+        // script must still define it. Leaving it out made every tick throw a
+        // ReferenceError before `++tries`, which kept the interval alive forever.
+        '  const ensureBadge = () => {};',
+        '  const badgePresent = () => false;',
+      ];
   return [
     '(() => {',
     `  const id = ${id};`,
@@ -168,6 +175,9 @@ export function titleMarkerExpression(pageId, options = {}) {
     '  try { if (window.__dshBrowserAutomation && window.__dshBrowserAutomation.dispose) window.__dshBrowserAutomation.dispose(); } catch (error) {}',
     ...badgeScript,
     '  let timer = 0;',
+    // Declared before the window object so the previous instance's dispose() can
+    // clear it. Without that, every re-mark left a second retry interval running.
+    '  let retry = 0;',
     '  const schedule = () => {',
     '    if (timer) return;',
     '    timer = setTimeout(() => { timer = 0; tag(); }, 60);',
@@ -176,11 +186,13 @@ export function titleMarkerExpression(pageId, options = {}) {
     '    const observer = new MutationObserver(schedule);',
     '    const target = document.head || document.documentElement;',
     '    if (target) observer.observe(target, { childList: true, subtree: true, characterData: true });',
-    '    window.__dshBrowserAutomation = { pageId: id, dispose: () => { observer.disconnect(); if (timer) clearTimeout(timer); if (badgeTimer) clearInterval(badgeTimer); dropBadge(); } };',
+    '    window.__dshBrowserAutomation = { pageId: id, dispose: () => { observer.disconnect(); if (timer) clearTimeout(timer); if (retry) clearInterval(retry); if (badgeTimer) clearInterval(badgeTimer); dropBadge(); } };',
     '  } catch (error) {}',
     // An init script runs before the document has a <title>; keep trying briefly.
+    // The guard guarantees `++tries` runs even if a badge implementation throws,
+    // so the interval always terminates.
     '  let tries = 0;',
-    '  const retry = setInterval(() => { tag(); ensureBadge(); if (++tries > 40) clearInterval(retry); }, 100);',
+    '  retry = setInterval(() => { tag(); try { ensureBadge(); } catch (error) {} if (++tries > 40) clearInterval(retry); }, 100);',
     '  return JSON.stringify({ pageId: id, title: document.title, url: location.href, badge: badgePresent() });',
     '})()',
   ].join('\n');
