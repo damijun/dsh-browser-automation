@@ -40,10 +40,6 @@ const renderWith =
 
 const text = (value) => (typeof value === 'string' ? value : JSON.stringify(value, null, 2));
 
-/** Shared sentence, because 14 tools repeating it would be pure token cost. */
-const PAGE_ID_NOTE =
-  'pageId is the stable handle from browser_open or browser_claim; the playwright-cli tab index is resolved internally on every call.';
-
 /**
  * Every tool this plugin can register, in the order {@link createTools} emits them.
  *
@@ -100,22 +96,14 @@ export function createTools(runtime) {
     {
       name: 'browser_open',
       description:
-        'Open an http(s) or file URL in a new DSH right-sidebar browser tab and take control of it. ' +
-        'It creates a real sidebar tab through the DSH UI, so the user can see the page and keep using it. ' +
-        'Open a tab only when the sidebar needs an extra one: the column shows one tab at a time and every ' +
-        'tab is a live page the user has to close. Check browser_list first — when a page you already ' +
-        'control no longer needs its current state, browser_navigate (type "url") reaches the new URL in that ' +
-        'tab and keeps its pageId, which is the cheap path. Open what must coexist: a page you keep as it is, a comparison, ' +
-        "the session's first tab. " +
-        'It never takes over an existing tab; use browser_claim for the page the user already has open. ' +
-        'Fails when the DSH page half is not connected. ' +
-        PAGE_ID_NOTE,
+        'Open a new browser page in the DSH right sidebar at the given URL and return its pageId. ' +
+        'Prefer navigating a page you already control with browser_navigate; open a new one only when two ' +
+        'pages must coexist. It never takes over an existing tab.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
           url: string('Absolute http(s) or file URL. A bare host becomes https://<host>.'),
-          waitMs: integer('How long to wait for the tab to become reachable, in milliseconds. Defaults to 15000.'),
         },
         required: ['url'],
       },
@@ -153,23 +141,15 @@ export function createTools(runtime) {
       },
       async execute(args, exec) {
         const sessionId = requireSession(exec);
-        return sanitize(await runtime.openPage({ sessionId, url: args.url, waitMs: args.waitMs, signal: exec.signal }));
+        return sanitize(await runtime.openPage({ sessionId, url: args.url, signal: exec.signal }));
       },
     },
 
     {
       name: 'browser_claim',
       description:
-        'Take over the browser page the user currently has open in the DSH right sidebar — the second of the ' +
-        'two ways to start work (the other is browser_open). Use it when the user says they already opened or ' +
-        'logged into a page and want you to continue from there. ' +
-        'The sidebar must be open with a browser tab selected: a collapsed sidebar keeps the page alive but ' +
-        'gives it no surface, so the plugin cannot tell which page the user is on. ' +
-        'SIDE EFFECT: this replaces the page identity on that tab, so any earlier pageId for the same tab stops ' +
-        'resolving; the user may be actively using that page, so ask before claiming when the intent is unclear. ' +
-        'Cannot take over a page that existed before playwright-cli attached (for example one opened before an app ' +
-        'restart): the CLI never adopts it. Reopen that URL (or browser_open it) and claim the new tab instead. ' +
-        'Fails when no page is visible, when the page half is not connected, or when the page is still loading.',
+        'Take over the browser page currently open in the DSH right sidebar and return its pageId. ' +
+        'Requires the sidebar to be open with a browser tab selected.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -203,11 +183,8 @@ export function createTools(runtime) {
     {
       name: 'browser_list',
       description:
-        'List browser tabs with their page handles. scope="session" (default) shows only pages this DSH session controls; ' +
-        'scope="all" also shows tabs other sessions control and unmarked tabs. ' +
-        'Read this before browser_open: a page you already control can take the new URL through ' +
-        'browser_navigate (type "url") instead of spending another tab. ' +
-        'Always re-read this instead of reusing a page handle from an earlier call.',
+        'List the pages this session can control, with their pageIds. Reuse a pageId from context or an earlier ' +
+        'tool result; call this only when you have no usable pageId.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -236,11 +213,11 @@ export function createTools(runtime) {
         render: renderWith((value) => {
           const body =
             value.pages.length === 0
-              ? 'No browser tabs are controlled by this session yet. Use browser_open to open one, or browser_claim to take over the tab the user has open.'
+              ? 'No pages in this session. Use browser_open or browser_claim.'
               : value.pages
                   .map(
                     (page) =>
-                      `${page.current ? '(current) ' : ''}${page.pageId ?? '(unmarked)'} — ${page.title ?? ''} — ${page.url}`,
+                      `${page.pageId ?? '(unmarked)'} — ${page.title ?? ''} — ${page.url}`,
                   )
                   .join('\n');
           // The warning is the whole point when the sidebar looks non-empty and this
@@ -257,14 +234,16 @@ export function createTools(runtime) {
     {
       name: 'browser_snapshot',
       description:
-        'Capture the accessibility snapshot of a page: one line per element with a [ref=…] handle for click/fill. ' +
-        'Snapshots are returned verbatim — refs are only valid for this snapshot, so re-snapshot after the page changes. ' +
-        'Prefer snapshot over screenshot for reading content; use screenshot only to judge visual layout.',
+        'Get an accessibility snapshot of the page, with [ref=…] handles for click and fill. ' +
+        'Refs are valid only for this snapshot; take a new one after the page changes. ' +
+        'Use this rather than a screenshot to read content.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          pageId: string('Page handle.'),
+          pageId: string(
+            'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
+          ),
           depth: integer('Optional maximum tree depth. Omit for the whole page.'),
         },
         required: ['pageId'],
@@ -300,21 +279,15 @@ export function createTools(runtime) {
     {
       name: 'browser_screenshot',
       description:
-        'Save a PNG screenshot of a page to disk and return its absolute path. ' +
-        'Screenshots are for judging layout, spacing, overflow and colour; read text with browser_snapshot instead. ' +
-        'SIDE EFFECT: Chromium only frames a sidebar tab that is on screen, so if this tab is not the visible one the ' +
-        'plugin brings it to the front (expanding the right sidebar if it is collapsed) and leaves it there. ' +
-        'The image is the sidebar tab as the user sees it. ' +
-        'Fails immediately when the DSH window itself is minimized or off screen: a hidden window produces no frames, ' +
-        'so ask the user to keep the window visible for screenshot runs. Every tool that does not need pixels still works. ' +
-        'Captures the sidebar as it is: the image is the current sidebar size, and nothing is resized to fit it. ' +
-        'A page opened from a conversation that is not on screen has no surface at all, so it cannot be captured ' +
-        'either — drive it with the other tools instead.',
+        'Capture a PNG screenshot of the page to disk and return its absolute path. ' +
+        'Use it to judge layout, spacing and colour; use browser_snapshot to read content.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          pageId: string('Page handle.'),
+          pageId: string(
+            'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
+          ),
           fullPage: boolean('Capture the whole scrollable page instead of the viewport.'),
           target: string('Optional element ref or selector to capture that element only.'),
         },
@@ -348,14 +321,14 @@ export function createTools(runtime) {
 
     {
       name: 'browser_click',
-      description:
-        'Click an element in a page by its [ref=…] handle from the latest snapshot (or a unique CSS selector). ' +
-        'The command switches playwright-cli\'s current tab to this page and leaves it there.',
+      description: 'Click an element in the page.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          pageId: string('Page handle.'),
+          pageId: string(
+            'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
+          ),
           ref: string('Element ref from the latest snapshot, e.g. e12, or a unique selector.'),
           button: string('left (default), right or middle.', { enum: ['left', 'right', 'middle'] }),
           double: boolean('Double-click instead of a single click.'),
@@ -398,13 +371,14 @@ export function createTools(runtime) {
     {
       name: 'browser_fill',
       description:
-        'Replace the contents of an editable element (input, textarea, contenteditable) with text, by [ref=…] or selector. ' +
-        'This always overwrites; use browser_press for keys like Enter or Escape.',
+        'Replace the contents of an editable element with text. Use browser_press for individual keys.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          pageId: string('Page handle.'),
+          pageId: string(
+            'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
+          ),
           ref: string('Element ref from the latest snapshot, or a unique selector.'),
           text: string('Text to fill in.'),
           submit: boolean('Press Enter after filling.'),
@@ -440,12 +414,14 @@ export function createTools(runtime) {
 
     {
       name: 'browser_press',
-      description: 'Press one keyboard key in a page, e.g. Enter, Tab, Escape, ArrowDown, or a single character.',
+      description: 'Press one keyboard key in the page.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          pageId: string('Page handle.'),
+          pageId: string(
+            'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
+          ),
           key: string('Key name, e.g. Enter.'),
         },
         required: ['pageId', 'key'],
@@ -471,23 +447,19 @@ export function createTools(runtime) {
     {
       name: 'browser_navigate',
       description:
-        'Navigate a controlled page in its existing tab. type defaults to "url" and then requires url; ' +
-        '"reload" re-enters the current URL, and "back" / "forward" step through the page history (the same ' +
-        'stack as the sidebar buttons). No new tab is created, and the pageId stays valid because the identity ' +
-        'is re-applied after navigation. The tab is brought to the front first, so the user can see it. ' +
-        'The previous page state is not preserved for url/reload — DOM, scroll and form input are gone; when ' +
-        'that state matters (you will come back to it, or the user is working in it), open a second tab with ' +
-        'browser_open and leave this one untouched. Reload never uses the CLI reload command, which reloads ' +
-        'the whole DSH window whatever tab is selected.',
+        'Navigate a browser page by URL, history, or reload. Prefer this to opening a new tab when the current ' +
+        'page state is no longer needed.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          pageId: string('Page handle.'),
-          type: string('url (default), reload, back or forward.', {
+          pageId: string(
+            'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
+          ),
+          type: string('Navigation type: url (default) to visit url, reload to refresh, back/forward for history.', {
             enum: ['url', 'reload', 'back', 'forward'],
           }),
-          url: string('Absolute http(s) or file URL. Required when type is url (or omitted).'),
+          url: string('Absolute http(s) or file URL. Required when type is url.'),
         },
         required: ['pageId'],
       },
@@ -525,26 +497,20 @@ export function createTools(runtime) {
     {
       name: 'browser_run_code',
       description:
-        'Run a Playwright snippet against a page. The code is a function body invoked with `page` in scope. ' +
-        'This is also the read-only workhorse: there is no separate evaluate tool, so read a value with ' +
-        '`return await page.evaluate(() => document.title)` and read elements with ' +
-        "`return await page.locator('a').allTextContents()`. Return a string (JSON.stringify it yourself when you " +
-        'need structure back); the snippet output is what comes back. ' +
-        'Choose per step: if the next action depends on what the previous step returned, stay on single-step tools ' +
-        '(snapshot → click/fill → snapshot); reach for run_code when the path can be written in advance — ' +
-        'regression flows, batch extraction, or capturing a transient state atomically. ' +
-        'When a script fails, go back to browser_snapshot and re-explore instead of retrying the script blindly. ' +
-        'Do not navigate from a snippet either: page.goto(), page.reload(), page.goBack() and page.goForward() ' +
-        'belong to browser_navigate — a snippet reload can take the DSH shell down with it. ' +
-        'Do not change the page geometry in a snippet: page.setViewportSize() and body zoom belong to the sidebar, ' +
-        'which DSH sizes. A page laid out wider than the sidebar comes back as a tiled screenshot (the page drawn ' +
-        'twice), so leave the viewport alone and screenshots stay clean.',
+        'Run a Playwright code snippet against the page; use it only when the dedicated tools are insufficient. ' +
+        'Do not call page.reload() or location.reload() — it reloads the DSH shell instead of the page; use ' +
+        'browser_navigate instead.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          pageId: string('Page handle.'),
-          code: string('Playwright code body, e.g. "async page => { await page.click(\'#go\'); return page.url() }".'),
+          pageId: string(
+            'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
+          ),
+          code: string(
+            'Playwright function body invoked with `page` in scope. Return a string for the output, e.g. ' +
+              '"return await page.title()".',
+          ),
         },
         required: ['pageId', 'code'],
       },
@@ -569,13 +535,15 @@ export function createTools(runtime) {
     {
       name: 'browser_console',
       description:
-        'Read the browser console messages of a page, most recent last. Useful when a click did nothing: ' +
-        'a JavaScript error usually explains it faster than another snapshot.',
+        'Read the page\'s browser console messages, most recent last. Use it when an action had no visible ' +
+        'effect and a JavaScript error may explain why.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          pageId: string('Page handle.'),
+          pageId: string(
+            'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
+          ),
           level: string('Minimum level: error, warning, info (default) or debug.', {
             enum: ['error', 'warning', 'info', 'debug'],
           }),
@@ -612,9 +580,8 @@ export function createTools(runtime) {
     {
       name: 'browser_status',
       description:
-        'Report the connection between this plugin, playwright-cli and the DSH page, and (optionally) attach or detach. ' +
-        'Call it when a browser_* tool reports a connection problem. ' +
-        'action="detach" releases playwright-cli without closing DSH; that is the way to end an automation run.',
+        'Report the connection between DSH, playwright-cli and the page. detach ends the automation session ' +
+        'without closing DSH.',
       parameters: {
         type: 'object',
         additionalProperties: false,

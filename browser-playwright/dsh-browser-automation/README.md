@@ -88,14 +88,14 @@ playwright-cli --version
 |---|---|
 | `browser_open {url}` | 通过 DSH UI **新建**侧边栏标签页 → 安装页面身份 → 返回 `pageId`。只在真的需要多一个 tab 时用（见下方"少开 tab"）。桥不可用即报错，**不会**复用现有标签页。**后台会话**走内部的 `openTabIn`，结果带 `background: true`（不聚焦、不可截图），见 §7.3 |
 | `browser_claim` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回该页自己的标题；从页面目录读出旧身份并换成新 `pageId`。无参数 |
-| `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页），带实时索引。**开页前先看这里** |
+| `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页）。同一 DSH 会话内 `pageId` 稳定：优先复用上下文里的 `pageId`，只在没有可用 `pageId` 时才列 |
 | `browser_navigate {pageId, type?, url?}` | 导航：`type` 默认 `url`（此时必须给 `url`）/ `reload` / `back` / `forward`。不新增 tab、`pageId` 不变；**先把 tab 切到前台**；`reload` 实现为 goto 当前 URL（**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面）；`back`/`forward` 走页面自己的历史栈 |
 | `browser_snapshot {pageId, depth?}` | 可访问性快照（含 `[ref=…]`），内容原样返回，不做二次压缩 |
 | `browser_screenshot {pageId, fullPage?, target?}` | 截图存盘，返回绝对路径（不内联字节） |
 | `browser_click {pageId, ref, button?, double?, modifiers?}` | 点击 |
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
-| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次身份（snippet 可能导航或替换文档），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。历史导航改走 `browser_navigate`（`type: "back"` / `"forward"`），不再用 `page.goBack()` / `page.goForward()` |
+| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次身份（snippet 可能导航或替换文档），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。**不要在 snippet 里 `page.reload()` / `location.reload()`**（会刷新 DSH 外壳）；导航优先用 `browser_navigate`，但 `page.goto()` / `goBack()` / `goForward()` 不禁止 |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
 | `browser_status {action}` | `status` / `attach` / `detach`；连接出问题先看它。状态面板由用户自己从侧栏打开，工具不代开 |
 
@@ -111,7 +111,7 @@ playwright-cli --version
 
 **可见性约定**：`browser_navigate`、`browser_click`、`browser_fill`、`browser_press` 都会**先把目标 tab 切到前台**（必要时展开收起的侧边栏）再执行，这样用户能看到插件在做什么。聚焦是尽力而为：定位不到 tab 时操作照常进行，失败时报真实原因。
 
-**副作用（工具描述里已声明）**：每个操作都会 `tab-select`，即改变 playwright-cli 的 current tab，并把它停在目标页上。
+**副作用（写在本文档，不占工具描述）**：每个操作都会 `tab-select`，即改变 playwright-cli 的 current tab，并把它停在目标页上。
 `browser_claim` 会替换页面身份，原来那个 `pageId` 立即失效。
 
 **工具开关**：12 个工具默认全部注册。想让模型只看到核心集合，可在配置里写 `disabledTools`
