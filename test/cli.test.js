@@ -22,10 +22,42 @@ function script(name, source) {
 
 const HANG = script('hang', 'setTimeout(() => {}, 60_000);\n');
 
+/**
+ * A self-contained npm-style `playwright-cli` install: a `.cmd` shim next to the
+ * JavaScript entry it points at. The resolution tests must not depend on a global
+ * CLI being installed on the machine running them (CI has none).
+ */
+function fakePlaywrightInstall() {
+  const dir = path.join(scratch, 'playwright-cli-install');
+  const entryDir = path.join(dir, 'node_modules', '@playwright', 'cli');
+  mkdirSync(entryDir, { recursive: true });
+  const entry = path.join(entryDir, 'playwright-cli.js');
+  writeFileSync(entry, 'export {};\n', 'utf8');
+  const shim = path.join(dir, 'playwright-cli.cmd');
+  writeFileSync(
+    shim,
+    '@ECHO off\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@playwright\\cli\\playwright-cli.js" %*\r\n',
+    'utf8',
+  );
+  return { dir, entry, shim };
+}
+
+const FAKE_CLI = fakePlaywrightInstall();
+const FAKE_CLI_ENV = {
+  ...process.env,
+  PATH: `${FAKE_CLI.dir}${path.delimiter}${process.env.PATH ?? ''}`,
+};
+
 test('resolves the npm shim to the JavaScript entry, so no shell quoting is needed', () => {
-  const plan = resolveCli({ command: 'playwright-cli' });
+  // On Windows this exercises PATH lookup of the shim; elsewhere the shim path is
+  // passed directly (the plugin targets Windows, so the PATH branch is the real one).
+  const plan = resolveCli({
+    command: process.platform === 'win32' ? 'playwright-cli' : FAKE_CLI.shim,
+    env: FAKE_CLI_ENV,
+  });
   assert.match(plan.file, /node(\.exe)?$/i);
-  assert.match(plan.prefix[0], /playwright-cli\.js$/);
+  assert.equal(plan.prefix[0], FAKE_CLI.entry);
+  assert.equal(plan.shim, FAKE_CLI.shim);
 });
 
 /**
@@ -126,9 +158,12 @@ test('an explicit node path is used verbatim and reported as config', () => {
 });
 
 test('the resolved plan reports where the node came from', () => {
-  const plan = resolveCli({ command: 'playwright-cli' });
+  const plan = resolveCli({
+    command: process.platform === 'win32' ? 'playwright-cli' : FAKE_CLI.shim,
+    env: FAKE_CLI_ENV,
+  });
   assert.ok(['process', 'dsh-runtime', 'path', 'config', 'electron-run-as-node'].includes(plan.nodeSource));
-  assert.match(plan.prefix[0], /playwright-cli\.js$/);
+  assert.equal(plan.prefix[0], FAKE_CLI.entry);
 });
 
 test('an explicit nodePath wins, and a wrong one fails loudly', () => {
