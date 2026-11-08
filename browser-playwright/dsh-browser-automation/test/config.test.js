@@ -22,6 +22,7 @@ const KEYS = [
   'attachTimeoutMs',
   'autoAttach',
   'showSharedBadge',
+  'disabledTools',
   'screenshotTimeoutMs',
   'screenshotSettleMs',
   'debug',
@@ -51,6 +52,7 @@ test('the defaults are the values the plugin runs with out of the box', () => {
   assert.equal(value('attachTimeoutMs'), 60_000);
   assert.equal(value('autoAttach'), true);
   assert.equal(value('showSharedBadge'), true);
+  assert.equal(value('disabledTools'), '');
   assert.equal(value('screenshotTimeoutMs'), 25_000);
   assert.equal(value('debug'), false);
 });

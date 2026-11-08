@@ -45,6 +45,53 @@ const PAGE_ID_NOTE =
   'pageId is the stable handle from browser_open or browser_claim; the playwright-cli tab index is resolved internally on every call.';
 
 /**
+ * Every tool this plugin can register, in the order {@link createTools} emits them.
+ *
+ * Kept as data so the `disabledTools` config can be validated without building the
+ * definitions, and so tests, README and the settings hint share one list.
+ */
+export const TOOL_NAMES = [
+  'browser_open',
+  'browser_claim',
+  'browser_list',
+  'browser_navigate',
+  'browser_snapshot',
+  'browser_screenshot',
+  'browser_click',
+  'browser_fill',
+  'browser_press',
+  'browser_run_code',
+  'browser_console',
+  'browser_status',
+];
+
+/**
+ * Apply the `disabledTools` configuration to a built tool list.
+ *
+ * Registration is the only switch the host offers: a disabled tool is never
+ * registered, so its schema never reaches the model's context. There is no
+ * per-call "this tool is off" answer to pay for — the model simply does not see
+ * the tool. Unknown names are reported so a typo is visible instead of silent.
+ *
+ * @param {any[]} tools
+ * @param {unknown} disabled comma-separated tool names
+ * @returns {{ tools: any[], disabled: string[], unknown: string[] }}
+ */
+export function selectTools(tools, disabled = '') {
+  const names = String(disabled ?? '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const wanted = new Set(names);
+  const known = new Set(TOOL_NAMES);
+  return {
+    tools: tools.filter((tool) => !wanted.has(tool.name)),
+    disabled: names,
+    unknown: names.filter((name) => !known.has(name)),
+  };
+}
+
+/**
  * @param {import('./runtime.js').Runtime} runtime
  * @returns {any[]} tool definitions for ctx.tools.register
  */
@@ -57,8 +104,8 @@ export function createTools(runtime) {
         'It creates a real sidebar tab through the DSH UI, so the user can see the page and keep using it. ' +
         'Open a tab only when the sidebar needs an extra one: the column shows one tab at a time and every ' +
         'tab is a live page the user has to close. Check browser_list first — when a page you already ' +
-        'control no longer needs its current state, browser_goto reaches the new URL in that tab and keeps ' +
-        'its pageId, which is the cheap path. Open what must coexist: a page you keep as it is, a comparison, ' +
+        'control no longer needs its current state, browser_navigate (type "url") reaches the new URL in that ' +
+        'tab and keeps its pageId, which is the cheap path. Open what must coexist: a page you keep as it is, a comparison, ' +
         "the session's first tab. " +
         'It never takes over an existing tab; use browser_claim for the page the user already has open. ' +
         'Fails when the DSH page half is not connected. ' +
@@ -159,7 +206,7 @@ export function createTools(runtime) {
         'List browser tabs with their page handles. scope="session" (default) shows only pages this DSH session controls; ' +
         'scope="all" also shows tabs other sessions control and unmarked tabs. ' +
         'Read this before browser_open: a page you already control can take the new URL through ' +
-        'browser_goto instead of spending another tab. ' +
+        'browser_navigate (type "url") instead of spending another tab. ' +
         'Always re-read this instead of reusing a page handle from an earlier call.',
       parameters: {
         type: 'object',
@@ -204,44 +251,6 @@ export function createTools(runtime) {
       async execute(args, exec) {
         const sessionId = requireSession(exec);
         return sanitize(await runtime.listPages({ sessionId, scope: args.scope ?? 'session' }));
-      },
-    },
-
-    {
-      name: 'browser_close',
-      description:
-        'Close one sidebar browser tab by pageId. It removes the DSH sidebar tab itself, so nothing is left behind. ' +
-        'It never detaches playwright-cli and never closes DSH. ' +
-        'Close tabs you are done with: the sidebar shows one tab at a time, so a tab you keep open keeps ' +
-        'costing the user attention. ' +
-        'Fails when the DSH page half is not connected, because only the page can remove a sidebar tab.',
-      parameters: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          pageId: string('Page handle to close.'),
-        },
-        required: ['pageId'],
-      },
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            pageId: string(),
-            closed: boolean(),
-            tabId: {
-              oneOf: [{ type: 'string' }, { type: 'null' }],
-              description: 'The sidebar tab id that was removed, when the page could report it.',
-            },
-          },
-          required: ['pageId', 'closed'],
-        },
-        render: renderWith((value) => `Closed the sidebar tab for ${value.pageId}.`),
-      },
-      async execute(args, exec) {
-        const sessionId = requireSession(exec);
-        return sanitize(await runtime.closePage({ pageId: args.pageId, sessionId, signal: exec.signal }));
       },
     },
 
@@ -460,52 +469,25 @@ export function createTools(runtime) {
     },
 
     {
-      name: 'browser_goto',
+      name: 'browser_navigate',
       description:
-        'Navigate a controlled page to another URL in its existing tab. This is the default way to change ' +
-        'address: it costs no new tab, and the page handle stays valid because the identity is re-applied after ' +
-        'the navigation. The tab is brought to the front first, so the user can see it. ' +
-        'The previous page state is not preserved — DOM, scroll and form input are gone after the navigation. ' +
-        'When that state matters (you will come back to it, or the user is working in it), open a second tab ' +
-        'with browser_open and leave this one untouched.',      parameters: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          pageId: string('Page handle.'),
-          url: string('Absolute http(s) or file URL.'),
-        },
-        required: ['pageId', 'url'],
-      },
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            pageId: string(),
-            url: string(),
-            title: string(),
-          },
-          required: ['pageId', 'url'],
-        },
-        render: renderWith((value) => `Navigated to ${value.url}${value.title ? ` — ${value.title}` : ''}.`),
-      },
-      async execute(args, exec) {
-        const sessionId = requireSession(exec);
-        return sanitize(await runtime.goto({ pageId: args.pageId, url: args.url, sessionId, signal: exec.signal }));
-      },
-    },
-
-    {
-      name: 'browser_reload',
-      description:
-        'Reload one sidebar browser page by pageId: it navigates that tab to its own current URL, after bringing the ' +
-        'tab to the front so the user can see it. It never uses the CLI reload command, which reloads the ' +
-        'whole DSH page whatever tab is selected. The tab stays the same tab, so pageId still resolves.',
+        'Navigate a controlled page in its existing tab. type defaults to "url" and then requires url; ' +
+        '"reload" re-enters the current URL, and "back" / "forward" step through the page history (the same ' +
+        'stack as the sidebar buttons). No new tab is created, and the pageId stays valid because the identity ' +
+        'is re-applied after navigation. The tab is brought to the front first, so the user can see it. ' +
+        'The previous page state is not preserved for url/reload — DOM, scroll and form input are gone; when ' +
+        'that state matters (you will come back to it, or the user is working in it), open a second tab with ' +
+        'browser_open and leave this one untouched. Reload never uses the CLI reload command, which reloads ' +
+        'the whole DSH window whatever tab is selected.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          pageId: string('Page handle. Must be a sidebar browser page, never the DSH application.'),
+          pageId: string('Page handle.'),
+          type: string('url (default), reload, back or forward.', {
+            enum: ['url', 'reload', 'back', 'forward'],
+          }),
+          url: string('Absolute http(s) or file URL. Required when type is url (or omitted).'),
         },
         required: ['pageId'],
       },
@@ -517,14 +499,26 @@ export function createTools(runtime) {
             pageId: string(),
             url: string(),
             title: string(),
+            type: string('The navigation performed: url, reload, back or forward.'),
           },
           required: ['pageId', 'url'],
         },
-        render: renderWith((value) => `Reloaded ${value.url}${value.title ? ` — ${value.title}` : ''}.`),
+        render: renderWith(
+          (value) =>
+            `Navigated (${value.type ?? 'url'}) to ${value.url}${value.title ? ` — ${value.title}` : ''}.`,
+        ),
       },
       async execute(args, exec) {
         const sessionId = requireSession(exec);
-        return sanitize(await runtime.reload({ pageId: args.pageId, sessionId, signal: exec.signal }));
+        return sanitize(
+          await runtime.navigate({
+            pageId: args.pageId,
+            type: args.type,
+            url: args.url,
+            sessionId,
+            signal: exec.signal,
+          }),
+        );
       },
     },
 
@@ -540,8 +534,8 @@ export function createTools(runtime) {
         '(snapshot → click/fill → snapshot); reach for run_code when the path can be written in advance — ' +
         'regression flows, batch extraction, or capturing a transient state atomically. ' +
         'When a script fails, go back to browser_snapshot and re-explore instead of retrying the script blindly. ' +
-        'History navigation lives here too: page.goBack() / page.goForward() (same as the sidebar buttons); they are ' +
-        'deliberately not separate tools. ' +
+        'Do not navigate from a snippet either: page.goto(), page.reload(), page.goBack() and page.goForward() ' +
+        'belong to browser_navigate — a snippet reload can take the DSH shell down with it. ' +
         'Do not change the page geometry in a snippet: page.setViewportSize() and body zoom belong to the sidebar, ' +
         'which DSH sizes. A page laid out wider than the sidebar comes back as a tiled screenshot (the page drawn ' +
         'twice), so leave the viewport alone and screenshots stay clean.',

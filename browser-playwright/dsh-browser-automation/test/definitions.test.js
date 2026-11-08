@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 import { Bridge } from '../src/bridge.js';
-import { createTools, sanitize } from '../src/tools.js';
+import { createTools, sanitize, selectTools, TOOL_NAMES } from '../src/tools.js';
 import {
   newPageId,
   sessionTag,
@@ -128,8 +128,9 @@ test('every tool definition satisfies the runtime schema subset', () => {
   assert.deepEqual(required.browser_snapshot, ['pageId']);
   assert.deepEqual(required.browser_fill, ['pageId', 'ref', 'text']);
   assert.deepEqual(required.browser_list, []);
+  assert.deepEqual(required.browser_navigate, ['pageId']);
   assert.deepEqual(errors, []);
-  assert.equal(tools.length, 14);
+  assert.equal(tools.length, 12);
 });
 
 /**
@@ -141,21 +142,17 @@ test('every tool definition satisfies the runtime schema subset', () => {
 test('every field the runtime can add is declared in the output schema', () => {
   const extras = {
     browser_claim: ['replacedExistingPageId'],
-    browser_close: ['tabId'],
     browser_list: ['warning'],
     browser_status: ['bridgeError'],
   };
-  // `browser_close` is a UI action that does not go through Runtime.onPage, so it
-  // reports no page fields — the one page-scoped tool where that is correct.
-  const notOnPage = new Set(['browser_close']);
   const problems = [];
   for (const tool of createTools(stubRuntime)) {
     const schema = tool.output.schema;
     const declared = new Set(Object.keys(schema.properties ?? {}));
-    // Every other page-scoped tool goes through Runtime.onPage, which adds pageId.
+    // Every page-scoped tool goes through Runtime.onPage, which adds pageId.
     // The tab index is deliberately absent: the model addresses pages by pageId only.
     const pageScoped = Object.hasOwn(tool.parameters.properties ?? {}, 'pageId');
-    if (pageScoped && !notOnPage.has(tool.name)) {
+    if (pageScoped) {
       for (const field of ['pageId']) {
         if (!declared.has(field)) problems.push(`${tool.name}: missing output field ${field}`);
       }
@@ -213,19 +210,35 @@ test('the tool set covers the documented capability list', () => {
   assert.deepEqual(names, [
     'browser_claim',
     'browser_click',
-    'browser_close',
     'browser_console',
     'browser_fill',
-    'browser_goto',
     'browser_list',
+    'browser_navigate',
     'browser_open',
     'browser_press',
-    'browser_reload',
     'browser_run_code',
     'browser_screenshot',
     'browser_snapshot',
     'browser_status',
   ]);
+  // TOOL_NAMES is the list `disabledTools` validates against; it must not drift.
+  assert.deepEqual([...TOOL_NAMES].sort(), names);
+});
+
+test('disabledTools removes exactly the named tools and reports typos', () => {
+  const all = createTools(stubRuntime);
+  const selection = selectTools(all, ' browser_console , browser_press ');
+  const kept = selection.tools.map((tool) => tool.name);
+  assert.equal(kept.includes('browser_console'), false);
+  assert.equal(kept.includes('browser_press'), false);
+  assert.equal(kept.length, all.length - 2);
+  assert.deepEqual(selection.unknown, []);
+  // Unknown names are reported, not silently ignored, and never remove anything.
+  const typo = selectTools(all, 'browser_consol');
+  assert.deepEqual(typo.unknown, ['browser_consol']);
+  assert.equal(typo.tools.length, all.length);
+  // The default (empty) configuration keeps everything.
+  assert.equal(selectTools(all, '').tools.length, all.length);
 });
 
 test('no tool opens the status panel: the user opens it from the sidebar', () => {

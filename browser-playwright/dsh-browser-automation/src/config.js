@@ -56,8 +56,16 @@ const fields = {
     .boolean()
     .default(true)
     .description(
-      'Show a floating badge on every page this plugin controls. Painted inside the page ' +
-        '(shadow DOM, pointer-events none) and re-applied after navigation.',
+      'Show a small "driven by the agent" badge above the sidebar while the browser tab in view is ' +
+        'controlled by this plugin. Nothing is painted into the page, and the badge ignores pointer events.',
+    ),
+
+  disabledTools: z
+    .string()
+    .default('')
+    .description(
+      'Comma-separated tool names to leave unregistered (e.g. "browser_console, browser_press"). ' +
+        'Empty keeps all 12 tools. Takes effect after the plugin row is re-enabled.',
     ),
 
   timeoutMs: z
@@ -95,6 +103,7 @@ const VOLATILE = [
   'nodePath',
   'autoAttach',
   'showSharedBadge',
+  'disabledTools',
   'timeoutMs',
   'requestTimeoutMs',
   'attachTimeoutMs',

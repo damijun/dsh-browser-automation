@@ -667,45 +667,6 @@ export class Runtime {
   }
 
   /**
-   * Close one sidebar browser tab.
-   *
-   * This is a UI action, not a CLI one: `playwright-cli tab-close` only destroys the
-   * CDP target, which leaves the sidebar tab behind as an empty shell ("页面加载失败")
-   * that keeps focus. Only `ctx.sidebarRight.close(tabId)` removes the tab, so the
-   * page half performs it and the CLI is not involved at all.
-   *
-   * @param {{ pageId: string }} request
-   */
-  async closePage(request) {
-    const pageId = requirePageId(request.pageId);
-    requireBridge(this.bridge, 'browser_close');
-    // Closing is an action on one conversation's strip: the handle must belong to the
-    // caller (a registered page, or at least a handle carrying that session's tag — which
-    // is how a tab left over from an earlier run can still be cleaned up).
-    requireOwnership(this.manager, pageId, request.sessionId);
-    const located = await this.locateTab(pageId);
-    const result = await this.bridge.request(
-      'close-page',
-      {
-        pageId,
-        sessionId: request.sessionId,
-        tabId: located.tabId,
-        url: located.url,
-      },
-      { timeoutMs: 8_000 },
-    );
-    if (!result || result.closed !== true) {
-      throw new Error(
-        `The DSH page did not close this tab: ${result?.reason ?? 'no reason reported'}.\n` +
-          'browser_close removes the sidebar tab itself (the CLI cannot: closing the CDP target leaves an ' +
-          'empty tab behind). Use browser_list to see what is still open, or close the tab in the sidebar.',
-      );
-    }
-    this.manager.unregister(pageId);
-    return { pageId, closed: true, tabId: result.tabId ?? null };
-  }
-
-  /**
    * Run one page-scoped operation, serialized per page. The tab is resolved once
    * here and threaded into the driver, so a tool call costs two CLI round trips
    * (list, select) instead of four.
@@ -974,11 +935,11 @@ export class Runtime {
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
-        const target = refuseApplicationTab(tab, 'browser_reload');
+        const target = refuseApplicationTab(tab, 'browser_navigate');
         if (!/^[a-z]+:/i.test(String(target.url ?? ''))) {
           throw new Error(
             `Cannot reload: this page has no URL to navigate back to (got "${target.url ?? ''}"). ` +
-              'Use browser_goto with an explicit URL instead.',
+              'Use browser_navigate with type "url" and an explicit URL instead.',
           );
         }
         const result = await driver.reload(target, { url: target.url });
@@ -988,6 +949,48 @@ export class Runtime {
       },
       { signal: request.signal, sessionId: request.sessionId },
     );
+  }
+
+  /**
+   * One navigation entry point for the model.
+   *
+   * `type` defaults to `url`; `reload`, `back` and `forward` live in the same tool
+   * so there is no separate reload alias to discover (or to lose context over).
+   * Back/forward use the page's own history stack — the same one the sidebar buttons
+   * drive — rather than `run-code`.
+   *
+   * @param {{ pageId: string, type?: string, url?: string, sessionId: string, signal?: AbortSignal }} request
+   */
+  async navigate(request) {
+    const type = request.type ?? 'url';
+    if (type === 'url') {
+      if (typeof request.url !== 'string' || request.url.trim() === '') {
+        throw new Error('browser_navigate with type "url" requires url (an absolute http(s) or file URL).');
+      }
+      return { ...(await this.goto(request)), type: 'url' };
+    }
+    if (type === 'reload') {
+      return { ...(await this.reload(request)), type: 'reload' };
+    }
+    if (type === 'back' || type === 'forward') {
+      await this.reveal(request.pageId);
+      return this.onPage(
+        request.pageId,
+        async (driver, tab) => {
+          const target = refuseApplicationTab(tab, 'browser_navigate');
+          const result = await driver.history(target, type);
+          if (!result.moved) {
+            throw new Error(
+              `No ${type} history entry: this page has no ${type} step available right now (it is at ${tab.url}).`,
+            );
+          }
+          this.manager.update(request.pageId, { url: result.url, title: result.title });
+          return { url: result.url, title: result.title, type };
+        },
+        { signal: request.signal, sessionId: request.sessionId },
+      );
+    }
+    throw new Error(`type must be one of "url", "reload", "back", "forward" (got ${JSON.stringify(type)}).`);
   }
 
   async runCode(request) {

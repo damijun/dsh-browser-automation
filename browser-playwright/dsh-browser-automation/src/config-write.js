@@ -17,6 +17,7 @@ export const EDITABLE_KEYS = {
   session: 'string',
   autoAttach: 'boolean',
   showSharedBadge: 'boolean',
+  disabledTools: 'string',
   timeoutMs: 'number',
   requestTimeoutMs: 'number',
   attachTimeoutMs: 'number',
@@ -47,6 +48,28 @@ export function composeConfigValues(layers = {}) {
 const kindOf = (key) => (Object.hasOwn(EDITABLE_KEYS, key) ? EDITABLE_KEYS[key] : undefined);
 
 /**
+ * The schema defaults for every declared key.
+ *
+ * This — not the running instance's booted values — is the baseline the settings
+ * card shows under the profile override. Using the booted copy made "reset" look
+ * broken: the override was deleted, but the card fell back to the value the process
+ * started with (the pre-save value), so the field appeared unchanged until a restart.
+ * Schema defaults are the one layer that does not move with a restart.
+ *
+ * @param {any} Config the plugin's Schemastery schema
+ * @returns {Record<string, unknown>}
+ */
+export function schemaDefaults(Config) {
+  const parsed = typeof Config === 'function' ? Config({}) : {};
+  const out = {};
+  for (const key of Object.keys(Config?.dict ?? {})) {
+    const field = parsed[key];
+    out[key] = field && typeof field.get === 'function' ? field.get() : field;
+  }
+  return out;
+}
+
+/**
  * Validate and convert one value coming from the page.
  *
  * @param {string} key
@@ -68,7 +91,11 @@ export function coerceConfigValue(key, raw) {
     return { ok: true, value: Math.round(numeric) };
   }
   const text = typeof raw === 'string' ? raw.trim() : raw === undefined || raw === null ? '' : String(raw);
-  if (text.length === 0) return { ok: false, error: `"${key}" must not be empty` };
+  // `disabledTools` uses the empty string as "enable everything", so it is the one
+  // string field where clearing the value is a valid edit rather than a mistake.
+  if (text.length === 0 && key !== 'disabledTools') {
+    return { ok: false, error: `"${key}" must not be empty` };
+  }
   return { ok: true, value: text };
 }
 

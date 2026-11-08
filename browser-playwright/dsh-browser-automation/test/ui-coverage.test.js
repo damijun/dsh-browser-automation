@@ -12,16 +12,54 @@ import { EDITABLE_KEYS } from '../src/config-write.js';
  *
  * The same applies to a helper that is defined and then never called (the startup
  * attach line was written once, its call site was never applied, and nothing failed).
+ *
+ * UI copy lives in locale/*.json now, so the label/description checks read those
+ * files; the control check still reads client.js, which owns the field list.
  */
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8');
+const readUi = (name) =>
+  JSON.parse(readFileSync(new URL(`../locale/${name}.json`, import.meta.url), 'utf8')).ui;
+const en = readUi('en');
+const zh = readUi('zh');
 
-test('every editable config key is readable and writable from the settings card', () => {
+/** Flatten the nested `ui` tree into the dotted keys `t()` uses. */
+function flatten(tree, prefix = '', out = {}) {
+  for (const [key, value] of Object.entries(tree ?? {})) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value && typeof value === 'object' && !Array.isArray(value)) flatten(value, path, out);
+    else out[path] = String(value);
+  }
+  return out;
+}
+
+const EN_KEYS = flatten(en);
+const ZH_KEYS = flatten(zh);
+
+test('every editable config key has a control, a label and a description', () => {
   const missing = [];
   for (const key of Object.keys(EDITABLE_KEYS)) {
-    if (!source.includes(`'cfg.field.${key}'`)) missing.push(`label for ${key}`);
-    if (!source.includes(`'cfg.desc.${key}'`)) missing.push(`description for ${key}`);
     if (!new RegExp(`key: '${key}', kind:`).test(source)) missing.push(`control for ${key}`);
+    for (const [lang, ui] of [
+      ['en', en],
+      ['zh', zh],
+    ]) {
+      if (!ui.cfg.field[key]) missing.push(`${lang} label for ${key}`);
+      if (!ui.cfg.desc[key]) missing.push(`${lang} description for ${key}`);
+    }
   }
+  assert.deepEqual(missing, []);
+});
+
+test('both locale files expose exactly the same UI keys', () => {
+  assert.deepEqual(Object.keys(EN_KEYS).sort(), Object.keys(ZH_KEYS).sort());
+});
+
+test('every literal key the client asks for exists in both locales', () => {
+  // Dynamic keys (`cfg.field.${key}`) are covered by the editable-key test above.
+  const used = [...source.matchAll(/t\('([^']+)'\)/g)]
+    .map((match) => match[1])
+    .filter((key) => key.includes('.'));
+  const missing = used.filter((key) => !Object.hasOwn(EN_KEYS, key) || !Object.hasOwn(ZH_KEYS, key));
   assert.deepEqual(missing, []);
 });
 
@@ -47,6 +85,14 @@ test('the panel actually renders the startup attach line', () => {
   assert.match(source, /'panel\.autoAttach'/);
 });
 
+test('the panel renders the one-time setup guide when CDP or the CLI is missing', () => {
+  assert.match(source, /cdpNeedsSetup/);
+  assert.match(source, /'panel\.setup\.cdp'/);
+  assert.match(source, /'panel\.setup\.cli'/);
+  assert.match(source, /--remote-debugging-port=0/);
+  assert.match(source, /npm install -g @playwright\/cli@latest/);
+});
+
 test('the panel counts and lists only the pages this session controls', () => {
   // `status.pages` is the plugin's global tab list (the same snapshot
   // `browser_status` returns), so an unfiltered render made the panel show every
@@ -69,9 +115,9 @@ test('both a save and a reset report that a re-enable is needed, briefly', () =>
   assert.match(source, /flashNote\(t\('cfg\.saved'\)\)/);
   assert.match(source, /flashNote\(t\('cfg\.reset'\)\)/);
   assert.match(source, /noteTimer\.current = setTimeout/);
-  assert.match(source, /cfg\.reset': '[^']*Restart DSH/);
+  assert.match(en.cfg.reset, /Restart DSH/);
+  assert.match(zh.cfg.reset, /重启/);
 });
-
 
 test('the shared badge is an overlay registration, not a page patch', async () => {
   // The badge must live on the frame-wide overlay layer: the page is never modified, and
@@ -101,4 +147,3 @@ test('the shared badge follows tab switches by event, with only a slow safety ti
   assert.match(source, /setInterval\(measure, 2000\)/, 'the safety net must stay slow');
   assert.doesNotMatch(source, /setInterval\(tick, 250\)/, 'the old poll must be gone');
 });
-

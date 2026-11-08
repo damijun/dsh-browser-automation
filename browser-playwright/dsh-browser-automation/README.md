@@ -1,19 +1,18 @@
 # dsh-browser-automation
 
-让 **DSH 桌面端右侧边栏浏览器**（`@deepseek-ai/dsh-client-ui-sidebar-browser`）变成模型可稳定驱动的自动化目标：
+让 **Windows 版 DSH 桌面端右侧边栏浏览器**（`@deepseek-ai/dsh-client-ui-sidebar-browser`）变成模型可稳定驱动的自动化目标：
 每个标签页有一个稳定的 `pageId`，模型只传 `pageId`，插件内部每次重新解析 playwright-cli 的标签索引。
 
-> **仅适用于 DSH 桌面端。** Web 版（浏览器里的 DSH）没有可附加的 CDP 端点，所有 `browser_*` 工具都驱动不了它的标签页，
-> 也没有侧边栏 `webview` 可分帧。插件本身不判断平台：它连的是 `DevToolsActivePort` 记录的端口，连不上就按 `diagnosis` 报错。
->
-> 开发依据：`../vibe-coding-doc/attach.md`（机制与限制）、`../vibe-coding-doc/tool.md`（工具清单与契约）。
+> **仅支持 Windows 版 DSH 桌面端。** 插件依赖 Electron 的 CDP 端点、`%APPDATA%` 下的
+> `DevToolsActivePort` 记录和 `playwright-cli.cmd` shim；Web 版没有可附加的 CDP 端点，
+> macOS/Linux 桌面端未验证。连不上时插件按 `diagnosis` 报出具体原因。
 
 ---
 
 ## 1. 结构
 
 ```
-工具层  browser_*（14 个模型工具，只认 pageId）
+工具层  browser_*（12 个模型工具，只认 pageId）
    │
 会话层  SessionManager：pageId 登记 / 会话归属 / 每页互斥锁
    │
@@ -27,33 +26,56 @@
 1. **索引是易失的中间产物，`pageId` 是稳定契约。** 每个工具调用都重新读页面目录（一次 `run-code`）解析索引，绝不缓存。
 2. **开页必须走 DSH 自己的 UI。** Electron 的 CDP 不支持 `Target.createTarget`，所以 `tab-new` 不能用；
    playwright-cli 也没有 `targetId` 参数。`browser_open` 由页面半边调用 `ctx.sidebarRight.openTab` 完成。
-3. **收尾只 `detach`，绝不 `close`。** `browser_close` 只关一个标签页，不碰 DSH 进程。
+3. **收尾只 `detach`，绝不 `close`。** 导航（`browser_navigate`）只换页/刷新/前后退，不碰 DSH 进程；自动化结束用 `browser_status {action:"detach"}`。
 
-> **已知待修（已写规格）**：CLI 的"当前页"是 daemon 全局状态，而当前互斥是按 pageId 分的，
-> 所以两个 DSH 会话同时操作**不同**页面时可能互相踩到对方页上。修法与验收见
-> [`docs/concurrency-fix.md`](docs/concurrency-fix.md)（尚未实现）。
+> **并发语义（已实现）**：playwright-cli 的"当前页"是 daemon 的全局状态。`PageDriver.withCli()`
+> 用一把**全局 CLI 互斥**把"选页 + 命令"整段串行化，所以两个 DSH 会话同时操作**不同**页面也不会
+> 互相踩；`SessionManager` 的 per-page 锁只负责同一页的登记与调用顺序。见
+> `src/driver.js` 的 `withCli()` 与 `executeOnResolvedTab()`。
 
 ---
 
 ## 2. 安装与前置条件
 
-插件已经装进 `desktop` profile（bundle `@local/dsh-browser-automation`，row `browser-automation`）。
+本地开发：插件目录以 junction 装进 `desktop` profile（bundle `@local/dsh-browser-automation`，row `browser-automation`）。
 重新安装用 Plugin Manager 的 `install_bundle`，`target` 指向本目录；不要手改 profile 的 `package.json`。
+发布后则是 `dsh plugin add <包名>` 或插件页安装。
 
-**DSH 桌面端必须以远程调试端口启动**，否则 playwright-cli 无法附加。两种写法：
+装完还差两步；缺哪一步，面板里都会出现同样的引导（§2.4）。
 
-- **推荐：`--remote-debugging-port=0`**（快捷方式 → 属性 → 目标，在 exe 路径后面追加，然后**完全退出并重启 DSH**）。
-  每次启动由 Chromium 自己挑一个空闲端口，并写进 DSH 用户数据目录下的 `DevToolsActivePort`；
-  插件读这个文件拿真实端口，所以**不会再有端口冲突**，也不需要把端口写死在任何地方——插件里**没有端口设置项**。
-- 固定端口：`--remote-debugging-port=9222`。也能用，但见 §6.2 的警告：这个端口会被上一代 DSH 的残留端点占住，
-  新实例会静默 bind 失败，插件看到的现象就是 `ECONNREFUSED`。
+### 2.1 给 DSH 加远程调试端口（必做）
 
-验证：`browser_status` 的 `cdp.url` 就是插件这次实际连的地址（它一定来自 `DevToolsActivePort`）；
-`Invoke-WebRequest <那个地址>/json/version` 能返回 JSON。
+1. **完全退出 DSH**：窗口关掉后，托盘图标也要退出——残留实例会占着旧端口。
+2. 右键 DSH 快捷方式 → **属性** → **目标**，在 `.exe` 路径后面追加：
+   ` --remote-debugging-port=0`
+3. 确定后重新启动 DSH。
 
-playwright-cli 默认假定已全局安装（`npm install -g @playwright/cli@latest`）。插件用
-`%PATH%` 里的 `playwright-cli.cmd` 找到它指向的 JS 入口，再用当前 Node 直接执行，
+`--remote-debugging-port=0` 让 Chromium 每次启动自己挑一个空闲端口，写进
+`%APPDATA%\@deepseek-ai\dsh-desktop\DevToolsActivePort`；插件读这个文件拿真实端口，
+所以**没有端口设置项**。固定端口（如 `9222`）也能用，但会被上一代 DSH 的残留端点占住，
+新实例静默 bind 失败，现象是 `ECONNREFUSED`（见 §9）。
+
+### 2.2 安装 playwright-cli（必做）
+
+```powershell
+npm install -g @playwright/cli@latest
+playwright-cli --version
+```
+
+插件用 `%PATH%` 里的 `playwright-cli.cmd` 找到它指向的 JS 入口，再用当前 Node 直接执行，
 **不经过 shell**——所以带引号、方括号、`$` 的 ref 和表达式不会被任何引号规则破坏。
+插件只 attach 到 DSH 的 CDP 端点，不需要另外下载浏览器。
+
+### 2.3 验证
+
+1. 侧栏打开「浏览器自动化」面板：CDP 一行显示已连接；
+2. 让模型调用 `browser_status`，`cdp.diagnosis` 应为 `serving`，`cli.resolved` 有值；
+3. `Invoke-WebRequest <cdp.url>/json/version` 返回 JSON。
+
+### 2.4 面板里的引导
+
+只要 CDP 连不上或 `playwright-cli` 不在 PATH，面板顶部会出现「一次性设置」卡片，
+把上面的命令原样列出来，并带「复制」按钮——不用回来翻 README。
 
 ---
 
@@ -67,20 +89,18 @@ playwright-cli 默认假定已全局安装（`npm install -g @playwright/cli@lat
 | `browser_open {url}` | 通过 DSH UI **新建**侧边栏标签页 → 安装页面身份 → 返回 `pageId`。只在真的需要多一个 tab 时用（见下方"少开 tab"）。桥不可用即报错，**不会**复用现有标签页。**后台会话**走内部的 `openTabIn`，结果带 `background: true`（不聚焦、不可截图），见 §7.3 |
 | `browser_claim` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回该页自己的标题；从页面目录读出旧身份并换成新 `pageId`。无参数 |
 | `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页），带实时索引。**开页前先看这里** |
-| `browser_close {pageId}` | **移除 DSH 侧边栏标签页本身**（`ctx.sidebarRight.close(tabId)`）并注销登记；不是 CLI 的 `tab-close`。用完的页顺手关掉 |
+| `browser_navigate {pageId, type?, url?}` | 导航：`type` 默认 `url`（此时必须给 `url`）/ `reload` / `back` / `forward`。不新增 tab、`pageId` 不变；**先把 tab 切到前台**；`reload` 实现为 goto 当前 URL（**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面）；`back`/`forward` 走页面自己的历史栈 |
 | `browser_snapshot {pageId, depth?}` | 可访问性快照（含 `[ref=…]`），内容原样返回，不做二次压缩 |
 | `browser_screenshot {pageId, fullPage?, target?}` | 截图存盘，返回绝对路径（不内联字节） |
 | `browser_click {pageId, ref, button?, double?, modifiers?}` | 点击 |
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
-| `browser_goto {pageId, url}` | 让该 tab 进入这个 URL（**换地址的默认方式**：不新增 tab、`pageId` 不变）；**先把 tab 切到前台**，用户能看见；身份由 init script 自动续上并复核 |
-| `browser_reload {pageId}` | 重新加载该页 —— 实现为 **`goto` 同一个 URL**，同样先切到前台。**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面（无论当前选中哪个 tab），侧边栏页面全丢 |
-| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次身份（snippet 可能导航或替换文档），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。历史导航 `page.goBack()` / `page.goForward()` 同样在这里用，不做单独工具 |
+| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次身份（snippet 可能导航或替换文档），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。历史导航改走 `browser_navigate`（`type: "back"` / `"forward"`），不再用 `page.goBack()` / `page.goForward()` |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
 | `browser_status {action}` | `status` / `attach` / `detach`；连接出问题先看它。状态面板由用户自己从侧栏打开，工具不代开 |
 
 **少开一个 tab 的判据**：侧栏同一时刻只显示一个 tab，每个 tab 都是一张活页面，用户还得自己关。
-所以"要去另一个地址"本身**不是**开新 tab 的理由——只要当前这页的状态不重要，`browser_goto` 就是更便宜的做法：
+所以"要去另一个地址"本身**不是**开新 tab 的理由——只要当前这页的状态不重要，`browser_navigate`（`type: "url"`）就是更便宜的做法：
 不新增 tab、`pageId` 不变、身份自动续上。只有下面这些情况才用 `browser_open`：
 
 - 两页要**同时存在**（对照、反复来回、跨页取信息）；
@@ -89,10 +109,13 @@ playwright-cli 默认假定已全局安装（`npm install -g @playwright/cli@lat
 
 `browser_open` 从不接管已有 tab（那会毁掉用户正在做的事）；要接管用户眼前那页用 `browser_claim`。
 
-**可见性约定**：`browser_goto`、`browser_reload`、`browser_click`、`browser_fill`、`browser_press` 都会**先把目标 tab 切到前台**（必要时展开收起的侧边栏）再执行，这样用户能看到插件在做什么。聚焦是尽力而为：定位不到 tab 时操作照常进行，失败时报真实原因。
+**可见性约定**：`browser_navigate`、`browser_click`、`browser_fill`、`browser_press` 都会**先把目标 tab 切到前台**（必要时展开收起的侧边栏）再执行，这样用户能看到插件在做什么。聚焦是尽力而为：定位不到 tab 时操作照常进行，失败时报真实原因。
 
 **副作用（工具描述里已声明）**：每个操作都会 `tab-select`，即改变 playwright-cli 的 current tab，并把它停在目标页上。
 `browser_claim` 会替换页面身份，原来那个 `pageId` 立即失效。
+
+**工具开关**：12 个工具默认全部注册。想让模型只看到核心集合，可在配置里写 `disabledTools`
+（逗号分隔，注册时过滤，schema 完全不进上下文），取舍建议见 §6.3。
 
 **`browser_claim` 找的是"用户眼前那一页"**，不是 playwright 的 current tab —— 后者是 CLI 自己的记账，
 re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会先问页面半边：
@@ -166,7 +189,7 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 ### 为什么只有一个 `run_code`，没有 `evaluate`
 
 `evaluate` 是 `run_code` 的子能力：`return await page.evaluate(() => …)` 与旧的 `playwright-cli eval` 等价，
-而 `run_code` 还能用 locator、键盘、导航、等待。两个工具并存只会让模型多一次「该用哪个」的选择，
+而 `run_code` 还能用 locator、键盘、等待（导航改走 `browser_navigate`）。两个工具并存只会让模型多一次「该用哪个」的选择，
 并且两套超时/错误/返回形状要各自维护。所以只保留 `browser_run_code`：
 
 - 读值：`return await page.evaluate(() => document.title)`
@@ -253,7 +276,7 @@ runtime.browser_xxx({ pageId, … })
 
 - `browser_open` 打开标签页时，界面端把新标签页的 `tabId` 回给宿主端，宿主端记进登记表；
 - `browser_claim` 接管可见页时，宿主端通过 `ping` 拿到界面端的 `activeTabId`，同样记进登记表；
-- 截图、可见操作、关闭标签页时，宿主端把 `tabId`（和网址）随命令传给界面端；
+- 截图、可见操作时，宿主端把 `tabId`（和网址）随命令传给界面端；
   界面端按 `[data-sidebar-right-tab="tabN"]` 精确定位，只有登记的标签编号为空（例如宿主端重启后
   从页面目录里"发现"的页）才退回按网址匹配，网址重复时报错而不是猜；
 - 徽标（“正在与智能体共享”）不再读标题：它把可见标签页的 `tabId`（和网址）发给宿主端一个内存查询
@@ -429,6 +452,42 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 > `browser_status.cdp.diagnosis` 会把失败分成 `stale`（被占但不应答）、`absent`（记录里的端口空着且无人应答）、
 > `no-record`（压根没有记录文件）。
 
+### 6.3 工具开关（disabledTools，默认空）
+
+12 个工具默认全部注册。`disabledTools` 用逗号分隔要**不注册**的工具名，例如：
+
+```yaml
+- id: browser-automation
+  name: '@local/dsh-browser-automation'
+  config:
+    disabledTools: browser_console, browser_press
+```
+
+- 只认完整工具名（大小写敏感）；拼错的名字会在宿主 debug 日志里提示，不会影响其他工具。
+- 过滤发生在 **`ctx.tools.register()` 之前**：被禁用的工具，schema 根本不进入模型上下文，不是"调用了才拒绝"。
+- 改完要**重新启用插件/重启 DSH** 才生效（配置只在 `apply()` 时快照一次）。
+
+按"单页 Web 应用测试"的典型用法，可这样取舍：
+
+| 工具 | 作用 | 建议 |
+|---|---|---|
+| `browser_open` / `browser_claim` | 两种开始方式：新开页 / 接管可见页 | 核心 |
+| `browser_list` | 找 `pageId`、确认有没有别的页 | 核心 |
+| `browser_navigate` | 同一 tab 导航：`url` / `reload` / `back` / `forward` | 核心 |
+| `browser_snapshot` | 读页面结构（`[ref=…]`） | 核心 |
+| `browser_click` / `browser_fill` | 点击 / 填表 | 核心 |
+| `browser_run_code` | 跑 Playwright 片段，也是读值入口 | 核心（权限最大，可单独关） |
+| `browser_press` | 单键 | 可选：Enter 可用 `fill` 的 `submit`，其余键可用 `run_code` |
+| `browser_screenshot` | 截图判断布局 | 可选：只在看视觉时用 |
+| `browser_console` | 控制台日志 | 可选：排障时开 |
+
+一个"单页测试"的最小配置：
+
+```yaml
+config:
+  disabledTools: browser_console, browser_press, browser_screenshot
+```
+
 ### `autoAttach`：开机自动 attach（默认开）
 
 **为什么需要**：`playwright-cli` 只收养 **attach 之后新建**的侧边栏页面。attach 发生在用户开页之后，那页就永远进不了
@@ -465,9 +524,10 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
 
 ## 7. 已知限制（首版明确不做）
 
-- **只在 DSH Desktop 可用，Web profile 不支持。** 两条独立原因：
-  ① Web 版跑在普通浏览器里，**没有 CDP 端点**（没有 `--remote-debugging-port=9222`），`playwright-cli attach` 无处可附；
-  ② 侧边栏浏览器在 Web 里不是 Electron `<webview>`，`tab-list` 里永远只有应用页本身。
+- **只在 Windows 版 DSH Desktop 可用，Web profile 与 macOS/Linux 不支持（未验证）。** 三条原因：
+  ① Web 版跑在普通浏览器里，**没有 CDP 端点**（没有 `--remote-debugging-port=0`），`playwright-cli attach` 无处可附；
+  ② 侧边栏浏览器在 Web 里不是 Electron `<webview>`，`tab-list` 里永远只有应用页本身；
+  ③ 端口发现读的是 `%APPDATA%\@deepseek-ai\dsh-desktop\DevToolsActivePort`，CLI 走 `.cmd` shim——都是 Windows 路径。
   表现是 `browser_open` 报"连不到页面桥"或 `tab-list` 看不到新页 —— 这不是 bug，是载体不同。
   同一份 `client.js` 在 Web 里仍会挂载并连接桥（它按文档相对 URL 解析），但没有任何页可驱动。
 - **跨窗口多会话**：`ctx.sidebarRight.openTab` 没有 session 参数，永远作用于"当前屏幕上的会话"。
@@ -482,11 +542,6 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
     让首帧出来 → 用 Playwright API `page.screenshot({ timeout: 25000 })` 落盘。**截完不切回**，侧边栏停在被截的那页。
   图片尺寸 = 该标签页在侧边栏里的实际尺寸（例如 430×915），不是固定视口。
   只是读内容时用 `browser_snapshot`，它不依赖合成，永远可用。
-- **关闭标签页必须走 DSH，不能走 CLI**。`playwright-cli tab-close <index>` 只销毁 CDP target，
-  DSH 侧边栏的标签页会留下来变成空壳（显示"页面加载失败；请刷新重试或在系统浏览器中打开。"），
-  而且仍然保持聚焦。只有 `ctx.sidebarRight.close(tabId)` 能真正移除它，所以 `browser_close` 是
-  **UI 动作**（走页面桥），完全不用 CLI；桥不可用时它直接报错，不会退化成 `tab-close`。
-  （旧版本留下的空壳页没有页面身份，`pageId` 也指不到它，需要手动点标签上的 × 关掉。）
 - **CLI 只收养"attach 之后新建"的侧边栏页面**。Electron 通过 CDP 暴露了所有侧边栏页面（`/json/list` 里是 `webview` 类型），
   但 `playwright-cli tab-list` 只跟踪 attach 之后创建的 target：**用户手动打开的页、以及应用重启后重建的页都看不见**
   （实测：重新 detach→attach 也无效）。
@@ -577,7 +632,7 @@ cd dsh-browser-automation
 node --test
 ```
 
-177 个用例，覆盖：
+181 个用例，覆盖：
 
 - `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、`current`/字段集）；
 - 页面身份脚本（写入 `window`、标题保持不变、幂等、初始化脚本嵌入）——用 `node:vm` + 假页面真跑；
@@ -585,21 +640,19 @@ node --test
 - **两种启动模式的约束**：桥不在/从未连上/掉线三种状态都必须报错且**不碰 CLI**（断言没有任何
   `tab-select`/`goto`，也没登记 pageId）；claim 在"看不见页面"、"页面还没进 tab-list"、"可见 URL 带尾斜杠或 hash"
   各种情况下的行为；claim 从页面目录读出旧身份后必须注销旧 pageId；
-- **关闭必须是 UI 动作**：断言 `browser_close` 全程**零 CLI 调用**；页面侧找不到标签页时报原因且不注销登记；
-  桥不可用时直接报错（不退化成 `tab-close`）；非法 pageId 先被拒；关闭命令带上登记的 `tabId`
-  （没有登记时从页面目录取网址兜底）；
 - **截图的两条路径**：可见页走 CLI 命令、隐藏页走"补 tabId→focus→长超时"；`fullPage` 透传；
   `target`（元素截图）必须留在 CLI 路径上；拿不到 tabId 时老实走普通路径；桥断了仍能走普通路径；
 - **client 半边的 harness**：把真实的 `client.js` 按页面的方式载入，用假 `__ModuleLoader__` + 假
   `ctx.sidebarRight`/`ctx.layout` 跑 `apply()`。断言 `hello` 用文档相对 URL、`open-tab` 只调一次
   `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/没有匹配标签页/toggle 抛错"五种情况下的动作序列、
-  `close-page` 真的调 `close(tabId)`、**collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、
+  **collapsed 时坐标在视口外**（x=959、窗宽 958）必须判为不可见、
   失败只报一次、空轮询不空转。这一层就是"页面里才炸"的那类 bug 的护栏；
 - **徽标不再读标题**：单测断言它调用宿主端的 `shared-state` 查询、源码里没有 `getTitle`/`dshpg`；
   `sharedTab` 优先按 `tabId`、只对没有 tabId 的记录按网址兜底；
-- **重载 = goto 同 URL**：断言 driver 收到的是"该页自己的 URL"而不是 `reload` 命令；无 URL 时明确报错；`dsh-app:` 目标仍拒；
-  **可见操作先聚焦**：goto/reload 的调用顺序是 `prepare-capture`（切前台）→ 导航；
-- **配置读写**：Config 的 8 个字段必须全部 `.volatile()`（否则表单看不到），默认值与 README 一致，profile 覆盖经引用读取；
+- **导航 = `browser_navigate`**：`url` 走 goto、`reload` 重进当前 URL 而不是 CLI 的 `reload` 命令、`back`/`forward` 走页面历史；
+  `back`/`forward` 以导航后的 URL/title 判定是否真的移动（SPA 里 `page.goBack()` 可能返回 null，但 URL 已经变了）；
+  无 URL 时明确报错；`dsh-app:` 目标仍拒；**可见操作先聚焦**：`prepare-capture`（切前台）→ 导航；
+- **配置读写**：12 个可编辑字段必须全部 `.volatile()`（另有隐藏的 `cdpPortFile`，不进表单），默认值与 README 一致，profile 覆盖经引用读取；
   写入只落 override 层（对照组：行内 `current` 已含 bundle 默认值，合并它会冻结默认值），`include:` 前缀的行 id 要能匹配，
   白名单用 `hasOwn`（`__proto__` 不能绕过），数字/布尔/空串校验；切片的 `configuration()` 被伪造时退回 `current`；
 - **配置卡片首帧**：用 harness 的 React stub 直接渲染一次 —— 卡片在首帧抛错会让整个插件页白屏，而且不报错；
@@ -632,7 +685,7 @@ node --test
 | T9 关闭后 `PAGE_NOT_FOUND` | ✅ 错误信息带当前 tab 列表摘要与下一步建议 |
 | T10 解析单测 | ✅ 含 `[]()` 标题、`(current)`、多命中 |
 | `browser_status.modes` | ✅ 实测 `{open:true, claim:false}`（无可见浏览器页时 claim 明确不可用），claim 随之给出"先展开侧边栏"的报错 |
-| `browser_close` 真机 | ✅ 关掉后侧边栏 chip 真的少一个（tab48 消失）、webview 从 2 个变 1 个、CLI 视图同步变 2 行，**没有留下"页面加载失败"空壳**；被关的 pageId 立刻 `PAGE_NOT_FOUND`，另一页照常工作 |
+| `browser_navigate` 真机 | ✅ `url` / `reload` / `back` / `forward` 都只作用于该 `pageId` 解析到的 tab；`reload` 不会刷新 DSH 页面，侧边栏其他页保持不动 |
 | `nodePath: auto` 真机 | ✅ 日志显示 `node from dsh-runtime`；`browser_status.cli.resolved.node` = `~/.dsh/dsh-runtimes/dsh-primary-runtime/.../node.exe`（v24.21.0）；新起的 CLI daemon 进程确实来自该路径，开页/列页正常 |
 
 ---
@@ -694,9 +747,11 @@ node --test
 
 - `private: true` 发布前去掉；`name` 改成你的 scope（现在是 `@local/dsh-browser-automation`）；
   `version` 建议随功能升到 `0.2.0`。
+- 加 `LICENSE`（MIT 正文），并加进 `files`。
 - 补 `repository` / `homepage` / `bugs`（插件市场会读）。
-- `files` 只含运行时文件；`docs/` 会一起发出去（`docs/concurrency-fix.md` 是待办规格，可留可去）。
-- 发布前跑 `npm test`（99 用例）。
+- 补 `engines.dsh`（例如 `>=0.2.1-rc.2 <0.3.0-0`）：市场用它判断 DSH 兼容性，未声明会显示"未声明"。
+- `files` 只含运行时文件；如果写文档，`docs/*.md` 会一起发出去。
+- 发布前跑 `npm test`（181 用例）。
 - 标题/描述/图标来自 `locale/{en,zh}.json` 与 `icon.svg`（矢量，插件页当封面用）。
 
 

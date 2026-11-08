@@ -1,10 +1,109 @@
 {
   "meta": {
     "title": "Sidebar Browser Automation",
-    "description": "Drive the DSH right-sidebar browser through playwright-cli: open, claim and operate pages, with a per-session page handle."
+    "description": "Drive the DSH Desktop (Windows) right-sidebar browser through playwright-cli: open, claim and operate pages, with a per-session page handle."
   },
   "bridge": {
     "connected": "Connected to the DSH host bridge",
     "unavailable": "The host bridge is unavailable"
+  },
+  "ui": {
+    "panel": {
+      "title": "Browser automation",
+      "guide": "CDP, bridge, interpreter and this session’s pages",
+      "refresh": "Refresh",
+      "detach": "Detach CLI",
+      "attach": "Reconnect",
+      "connection": "Connection",
+      "interpreter": "CLI interpreter",
+      "modes": "Start modes",
+      "pages": "Pages in this session",
+      "empty": "No controlled pages yet — ask for browser_open or browser_claim.",
+      "loading": "Working…",
+      "unavailable": "unavailable",
+      "available": "available",
+      "connected": "connected",
+      "disconnected": "disconnected",
+      "current": "current",
+      "open": "open a new tab",
+      "claim": "take over the visible page",
+      "detachHint": "Detach ends the automation session: existing pageIds stop resolving.",
+      "noSession": "This tab is not bound to a session.",
+      "clients": "clients",
+      "polls": "held polls",
+      "autoAttach": "Startup attach",
+      "autoAttachOk": "attached",
+      "autoAttachPending": "connecting…",
+      "autoAttachFailed": "failed",
+      "autoAttachOff": "off (autoAttach: false)",
+      "setup": {
+        "title": "One-time setup",
+        "cdp": "CDP is not reachable ({diagnosis}). DSH must be started with the debugging port.",
+        "stale": "A previous DSH session left the debugging port held by a helper process. Quit DSH completely, end the process that still owns the port (README §9), then start DSH again.",
+        "quit": "Quit DSH completely — close the window and the tray icon.",
+        "shortcut": "Right-click the DSH shortcut → Properties → Target, and append this to the .exe path:",
+        "restart": "Start DSH again. This panel should then show CDP connected.",
+        "cliTitle": "playwright-cli is not installed",
+        "cli": "The plugin drives the sidebar through playwright-cli, which is not on PATH. Install it:",
+        "after": "Then reopen this panel; the tools will start working.",
+        "copy": "Copy",
+        "copied": "Copied",
+        "docs": "The same steps are in README §2."
+      }
+    },
+    "cfg": {
+      "title": "Browser automation settings",
+      "summary": "Sidebar browser automation",
+      "loading": "Loading configuration…",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Written to the profile patch. Restart DSH to apply it.",
+      "reset": "Reset to default. Restart DSH to apply it.",
+      "resetField": "Reset",
+      "readOnly": "Read-only: this host does not serve the settings form. Edit cordis.patch.yml in the profile to change these values.",
+      "noService": "no configForms service",
+      "noForm": "no form for this row",
+      "writeHint": "A save only writes the profile patch; restart DSH to apply it.",
+      "path": "PATH",
+      "errNumber": "{key} must be a number.",
+      "subtitle": "Saved to this profile patch. Restart DSH to apply it.",
+      "auto": "Auto",
+      "custom": "Custom path",
+      "customPlaceholder": "absolute path to node.exe,eg.C:\\Program Files\\nodejs\\node.exe",
+      "on": "On",
+      "off": "Off",
+      "overridden": "overridden",
+      "field": {
+        "nodePath": "Node path",
+        "command": "CLI command",
+        "session": "CLI session name",
+        "timeoutMs": "CLI timeout (ms)",
+        "requestTimeoutMs": "Bridge timeout (ms)",
+        "attachTimeoutMs": "Attach timeout (ms)",
+        "screenshotTimeoutMs": "Capture timeout (ms)",
+        "screenshotSettleMs": "Screenshot settle (ms)",
+        "autoAttach": "Attach at startup",
+        "showSharedBadge": "Shared page badge",
+        "debug": "Debug logging",
+        "disabledTools": "Disabled tools"
+      },
+      "desc": {
+        "nodePath": "Auto prefers the Node DSH ships, then PATH.",
+        "command": "Command name on PATH, or an absolute path of \"playwright-cli.js\".",
+        "session": "playwright-cli -s= name; every DSH session shares it.",
+        "timeoutMs": "Per-call timeout for one CLI invocation.",
+        "requestTimeoutMs": "How long a tool waits for the page half to answer.",
+        "attachTimeoutMs": "How long the CLI may take to attach before one retry.",
+        "screenshotTimeoutMs": "Deadline for one screenshot capture.",
+        "screenshotSettleMs": "Wait for a first frame after focusing a hidden tab.",
+        "autoAttach": "Attach once when DSH starts, so sidebar pages opened afterwards are visible to the CLI. Costs one daemon process while DSH runs; only one DSH instance at a time.",
+        "showSharedBadge": "Show a small \"driven by the agent\" badge above the sidebar while the browser tab in view is controlled by this plugin. Nothing is painted into the page, and the badge ignores pointer events.",
+        "debug": "Print bridge and CLI diagnostics to the host log.",
+        "disabledTools": "Comma-separated tool names to leave unregistered (e.g. browser_console, browser_press). Empty keeps all 12 tools. Takes effect after the plugin row is re-enabled."
+      }
+    },
+    "chip": {
+      "shared": "shared with the agent"
+    }
   }
 }

@@ -557,6 +557,35 @@ export class PageDriver {
   }
 
   /**
+   * Step the page's own history back or forward.
+   *
+   * playwright-cli has no `back`/`forward` verb; `run-code` is the only entry that
+   * can call `page.goBack()` / `page.goForward()` on the resolved tab.
+   *
+   * The return value of goBack()/goForward() is **not** a reliable "did it move"
+   * signal: for a same-document history step it is null even though the URL did
+   * change (observed on a SPA page). So the step is judged by the identity the
+   * post-run marker read-back reports: if URL or title changed, it moved.
+   *
+   * @param {ResolvedTab & { pageId?: string }} tab
+   * @param {'back' | 'forward'} direction
+   */
+  async history(tab, direction) {
+    const method = direction === 'forward' ? 'goForward' : 'goBack';
+    const before = { url: tab.url, title: tab.title };
+    const result = await this.runCode(tab, {
+      code: `async page => { await page.${method}(); return "done"; }`,
+    });
+    const url = typeof result.url === 'string' && result.url !== '' ? result.url : before.url;
+    const title = typeof result.title === 'string' ? result.title : before.title;
+    return {
+      moved: url !== before.url || title !== before.title,
+      url,
+      title,
+    };
+  }
+
+  /**
    * @param {ResolvedTab} tab
    * @param {{ level?: string }} [options]
    */

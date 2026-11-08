@@ -13,6 +13,11 @@ import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8');
 
+/** The UI dictionaries live in locale/*.json; the page fetches them from the Host. */
+const localeUi = (name) =>
+  JSON.parse(readFileSync(new URL(`../locale/${name}.json`, import.meta.url), 'utf8')).ui;
+const LOCALE_PAIR = { en: localeUi('en'), zh: localeUi('zh') };
+
 /**
  * @param {{
  *   reply?: (url: string, init: unknown) => object,
@@ -103,7 +108,13 @@ function harness(options = {}) {
     clearTimeout,
     fetch: (url, init) => {
       requests.push({ url, init });
-      const reply = options.reply ? options.reply(url, init) : { ok: true, value: { command: null } };
+      // The real Host serves locale/*.json through the same bridge; answer it here
+      // for every harness, even the ones that override `reply` for other actions.
+      const reply = String(url).endsWith('/locale')
+        ? { ok: true, value: LOCALE_PAIR }
+        : options.reply
+          ? options.reply(url, init)
+          : { ok: true, value: { command: null } };
       // Resolve on a macrotask so a loop iteration cannot starve the event loop.
       return new Promise((resolve) => {
         setTimeout(() => {
@@ -410,58 +421,6 @@ test('prepare-capture falls back to layout.openRightbar when the toggle throws',
   assert.equal(JSON.stringify(calls), JSON.stringify([['openRightbar'], ['focus', 'tab7']]));
   const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
   assert.equal(value.expandVia, 'layout.openRightbar');
-});
-
-/**
- * Closing is a UI action: `playwright-cli tab-close` only destroys the CDP target
- * and leaves the sidebar tab as an empty "页面加载失败" shell, so the page half must
- * remove the tab itself.
- */
-function closeHarness(options) {
-  let delivered = false;
-  return harness({
-    ...options,
-    reply: (url) => {
-      if (url.endsWith('/poll') && !delivered) {
-        delivered = true;
-        return {
-          ok: true,
-          value: { command: { requestId: 'r4', kind: 'close-page', ...(options.command ?? {}) } },
-        };
-      }
-      return { ok: true, value: { command: null } };
-    },
-  });
-}
-
-test('close-page removes the tab through the sidebar controller', async () => {
-  const { requests, start, stop } = closeHarness({
-    command: { tabId: 'tab7', url: 'https://a.test/' },
-    chips: [{ tabId: 'tab7', url: 'https://a.test/', text: 'Page' }],
-  });
-  const { calls } = start();
-  await settle(80);
-  stop();
-
-  assert.equal(JSON.stringify(calls), JSON.stringify([['close', 'tab7']]));
-  const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
-  assert.equal(value.closed, true);
-  assert.equal(value.tabId, 'tab7');
-});
-
-test('close-page reports why it could not find the tab', async () => {
-  const { requests, start, stop } = closeHarness({
-    command: { tabId: '', url: 'https://missing.test/' },
-    chips: [],
-  });
-  const { calls } = start();
-  await settle(80);
-  stop();
-
-  assert.deepEqual(calls, []);
-  const value = JSON.parse(requests.filter((r) => r.url.endsWith('/result'))[0].init.body).value;
-  assert.equal(value.closed, false);
-  assert.match(value.reason, /no sidebar tab matches this page/);
 });
 
 /** A collapsed panel slides the whole column out of the viewport while its content

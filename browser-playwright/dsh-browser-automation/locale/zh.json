@@ -1,10 +1,109 @@
 {
   "meta": {
     "title": "侧边栏浏览器自动化",
-    "description": "通过 playwright-cli 驱动 DSH 右侧边栏浏览器：按会话打开、接管并操作页面，每个页面有稳定的 pageId。"
+    "description": "通过 playwright-cli 驱动 DSH 桌面端（Windows）右侧边栏浏览器：按会话打开、接管并操作页面，每个页面有稳定的 pageId。"
   },
   "bridge": {
     "connected": "已连接 DSH 宿主桥",
     "unavailable": "宿主桥不可用"
+  },
+  "ui": {
+    "panel": {
+      "title": "浏览器自动化",
+      "guide": "查看 CDP、桥、解释器与本会话的受控页面",
+      "refresh": "刷新",
+      "detach": "断开 CLI",
+      "attach": "重新连接",
+      "connection": "连接",
+      "interpreter": "CLI 解释器",
+      "modes": "启动模式",
+      "pages": "本会话的页面",
+      "empty": "还没有受控页面 —— 让模型调用 browser_open 或 browser_claim。",
+      "loading": "处理中…",
+      "unavailable": "不可用",
+      "available": "可用",
+      "connected": "已连接",
+      "disconnected": "未连接",
+      "current": "当前",
+      "open": "新开标签页",
+      "claim": "接管可见页",
+      "detachHint": "断开即结束自动化会话：已有 pageId 会失效。",
+      "noSession": "这个标签页没有绑定到会话。",
+      "clients": "客户端",
+      "polls": "挂起轮询",
+      "autoAttach": "开机自动连接",
+      "autoAttachOk": "已连接",
+      "autoAttachPending": "连接中…",
+      "autoAttachFailed": "失败",
+      "autoAttachOff": "已关闭（autoAttach: false）",
+      "setup": {
+        "title": "一次性设置",
+        "cdp": "CDP 连不上（{diagnosis}）。DSH 必须带调试端口启动。",
+        "stale": "上一代 DSH 的残留进程占着调试端口。先完全退出 DSH，结束仍占用该端口的进程（见 README §9），再启动 DSH。",
+        "quit": "完全退出 DSH —— 窗口和托盘图标都要退出。",
+        "shortcut": "右键 DSH 快捷方式 → 属性 → 目标，在 .exe 路径后面追加：",
+        "restart": "重新启动 DSH。回到这个面板后，CDP 应显示已连接。",
+        "cliTitle": "没有找到 playwright-cli",
+        "cli": "插件通过 playwright-cli 驱动侧边栏，但 PATH 上找不到它。先安装：",
+        "after": "装好后重新打开这个面板，工具就会开始工作。",
+        "copy": "复制",
+        "copied": "已复制",
+        "docs": "同样的步骤也写在 README §2。"
+      }
+    },
+    "cfg": {
+      "title": "浏览器自动化配置",
+      "summary": "侧边栏浏览器自动化",
+      "loading": "正在读取配置…",
+      "save": "保存",
+      "saving": "保存中…",
+      "saved": "已写入 profile patch。重启 DSH 后生效。",
+      "reset": "已恢复默认值。重启 DSH 后生效。",
+      "resetField": "恢复默认",
+      "readOnly": "只读：当前宿主没有提供设置表单。要改这些值，请编辑 profile 里的 cordis.patch.yml。",
+      "noService": "没有 configForms 服务",
+      "noForm": "这一行没有可编辑的表单",
+      "writeHint": "保存本身只写 profile patch；重启 DSH 后生效。",
+      "path": "PATH",
+      "errNumber": "{key} 必须是数字。",
+      "subtitle": "只写入这个 profile 的 patch；重启 DSH 后生效。",
+      "auto": "自动",
+      "custom": "自定义路径",
+      "customPlaceholder": "node.exe的绝对路径,例如C:\\Program Files\\nodejs\\node.exe",
+      "on": "开启",
+      "off": "关闭",
+      "overridden": "已覆盖",
+      "field": {
+        "nodePath": "Node 路径",
+        "command": "CLI 命令",
+        "session": "CLI 会话名",
+        "timeoutMs": "CLI 超时（ms）",
+        "requestTimeoutMs": "桥超时（ms）",
+        "attachTimeoutMs": "Attach 超时（ms）",
+        "screenshotTimeoutMs": "截图超时（ms）",
+        "screenshotSettleMs": "截图首帧等待（ms）",
+        "autoAttach": "开机自动连接",
+        "showSharedBadge": "共享页面标记",
+        "debug": "调试日志",
+        "disabledTools": "禁用的工具"
+      },
+      "desc": {
+        "nodePath": "自动：优先用 DSH 自带的 Node，其次是 PATH。",
+        "command": "PATH 上的命令名，或 playwright-cli.js 的绝对路径。",
+        "session": "playwright-cli 的 -s= 会话名；所有 DSH 会话共用。",
+        "timeoutMs": "单次 CLI 调用的超时时间。",
+        "requestTimeoutMs": "等页面半边回答的最长时间。",
+        "attachTimeoutMs": "CLI 附着的最长等待，超时后重试一次。",
+        "screenshotTimeoutMs": "单次截图抓取的最长等待。",
+        "screenshotSettleMs": "把隐藏标签页切到前台后，等首帧的时间。",
+        "autoAttach": "DSH 启动时先 attach 一次，之后打开的侧边栏页面才能被 CLI 看见。代价是运行期间常驻一个 daemon 进程；同时只能有一个 DSH 实例。",
+        "showSharedBadge": "当正在看的浏览器页由本插件控制时，在侧栏上方显示一个「由智能体驱动」的小浮标：不往页面里画任何东西，浮标也不接收点击。",
+        "debug": "把桥与 CLI 诊断打印到宿主日志。",
+        "disabledTools": "逗号分隔的工具名，不注册这些工具（例如 browser_console, browser_press）。留空表示全部启用；重新启用插件后生效。"
+      }
+    },
+    "chip": {
+      "shared": "正在与智能体共享"
+    }
   }
 }

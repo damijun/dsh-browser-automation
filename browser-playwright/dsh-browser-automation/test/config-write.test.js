@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { Config } from '../src/config.js';
 import {
   EDITABLE_KEYS,
   applyConfigChange,
@@ -8,6 +9,7 @@ import {
   coerceConfigValue,
   findRow,
   resetConfigKey,
+  schemaDefaults,
 } from '../src/config-write.js';
 
 /**
@@ -36,6 +38,7 @@ test('every editable key has a declared type and nothing else is writable', () =
     'autoAttach',
     'command',
     'debug',
+    'disabledTools',
     'nodePath',
     'requestTimeoutMs',
     'screenshotSettleMs',
@@ -60,6 +63,16 @@ test('values are validated and converted by their declared type', () => {
   assert.equal(coerceConfigValue('debug', 'yes').ok, false);
 });
 
+test('disabledTools is the one string field where empty is a valid value', () => {
+  assert.deepEqual(coerceConfigValue('disabledTools', ' browser_console, browser_press '), {
+    ok: true,
+    value: 'browser_console, browser_press',
+  });
+  assert.deepEqual(coerceConfigValue('disabledTools', ''), { ok: true, value: '' });
+  // Every other string key still rejects an empty value.
+  assert.equal(coerceConfigValue('command', '').ok, false);
+});
+
 /**
  * The card must show the configuration the patch describes, not the one the running
  * instance booted with: a write only reaches the patch, so reading the booted copy
@@ -77,6 +90,20 @@ test('the patch view stacks base, inherited and override in that order', () => {
   // Missing or malformed layers degrade to the base instead of throwing.
   assert.deepEqual(composeConfigValues({ base: { a: 1 } }), { a: 1 });
   assert.deepEqual(composeConfigValues(), {});
+});
+
+test('reset falls back to schema defaults, not to the booted values', () => {
+  const defaults = schemaDefaults(Config);
+  assert.equal(defaults.session, 'dsh');
+  assert.equal(defaults.disabledTools, '');
+  assert.equal(defaults.showSharedBadge, true);
+  // The shape the config card reads after a reset: no override, so the field must
+  // show the schema default rather than the value the process booted with.
+  assert.equal(composeConfigValues({ base: defaults, override: {} }).disabledTools, '');
+  assert.equal(
+    composeConfigValues({ base: defaults, override: { disabledTools: 'browser_console' } }).disabledTools,
+    'browser_console',
+  );
 });
 
 test('a write keeps the other overrides and never materialises the inherited layer', async () => {

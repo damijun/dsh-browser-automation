@@ -2,11 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Runtime, localFileHint, refuseApplicationTab } from '../src/runtime.js';
+import { PageDriver } from '../src/driver.js';
 
 /**
- * `browser_reload` exists because reloading the DSH application page by hand took the
- * whole window down. The tool therefore has to make that target unreachable in two
- * independent ways, and both are pinned here.
+ * `browser_navigate` (type "reload") exists because reloading the DSH application
+ * page by hand took the whole window down. The tool therefore has to make that
+ * target unreachable in two independent ways, and both are pinned here.
  */
 
 const PAGE_ID = 'dshpg-abcdef-01234567';
@@ -106,8 +107,8 @@ test('reload refuses the DSH application page even if a marker points at it', as
  * ile: (or a data: document) is a legitimate target and must stay reachable.
  */
 test('the guard refuses only the application scheme, not other test subjects', () => {
-  assert.throws(() => refuseApplicationTab({ url: 'dsh-app://app/' }, 'browser_reload'), /dsh-app:/);
-  assert.throws(() => refuseApplicationTab({ url: 'dsh-app://app/index.html' }, 'browser_reload'), /dsh-app:/);
+  assert.throws(() => refuseApplicationTab({ url: 'dsh-app://app/' }, 'browser_navigate'), /dsh-app:/);
+  assert.throws(() => refuseApplicationTab({ url: 'dsh-app://app/index.html' }, 'browser_navigate'), /dsh-app:/);
 
   for (const url of [
     'file:///C:/Users/damijun/IdeaProjects/tool_calling/src/main/resources/static/index.html',
@@ -115,7 +116,7 @@ test('the guard refuses only the application scheme, not other test subjects', (
     'http://127.0.0.1:9222/json',
     'https://example.test/',
   ]) {
-    assert.equal(refuseApplicationTab({ url }, 'browser_reload').url, url);
+    assert.equal(refuseApplicationTab({ url }, 'browser_navigate').url, url);
   }
 });
 
@@ -150,6 +151,88 @@ test('a pageId that resolves to nothing fails before any reload', async () => {
   };
   await assert.rejects(() => runtime.reload({ pageId: PAGE_ID }), /PAGE_NOT_FOUND/);
   assert.equal(reloaded, false);
+});
+
+test('navigate defaults to url and refuses a missing url', async () => {
+  const runtime = new Runtime({ config: {} });
+  let seen = null;
+  runtime.goto = async (request) => {
+    seen = request;
+    return { url: 'https://x.test/', title: 'X' };
+  };
+  const result = await runtime.navigate({ pageId: PAGE_ID, url: 'https://x.test/', sessionId: 's1' });
+  assert.equal(seen.url, 'https://x.test/');
+  assert.equal(result.type, 'url');
+  await assert.rejects(
+    () => runtime.navigate({ pageId: PAGE_ID, sessionId: 's1' }),
+    /requires url/,
+  );
+});
+
+test('navigate type reload goes through reload, not the CLI reload command', async () => {
+  const runtime = new Runtime({ config: {} });
+  runtime.reload = async () => ({ url: 'https://x.test/', title: 'Reloaded' });
+  const result = await runtime.navigate({ pageId: PAGE_ID, type: 'reload', sessionId: 's1' });
+  assert.equal(result.type, 'reload');
+  assert.equal(result.title, 'Reloaded');
+});
+
+test('navigate back/forward uses the page history and updates the registry', async () => {
+  const { runtime } = harness();
+  runtime.manager.register({ pageId: PAGE_ID, sessionId: 's1', url: 'https://example.test/', source: 'open' });
+  const seen = [];
+  runtime.driver.history = async (tab, direction) => {
+    seen.push(direction);
+    return { moved: true, url: 'https://prev.test/', title: 'Prev' };
+  };
+  const result = await runtime.navigate({ pageId: PAGE_ID, type: 'back', sessionId: 's1' });
+  assert.deepEqual(seen, ['back']);
+  assert.equal(result.url, 'https://prev.test/');
+  assert.equal(result.type, 'back');
+  assert.equal(runtime.manager.get(PAGE_ID)?.title, 'Prev');
+});
+
+test('navigate back with no history entry fails instead of pretending', async () => {
+  const { runtime } = harness();
+  runtime.manager.register({ pageId: PAGE_ID, sessionId: 's1', url: 'https://example.test/', source: 'open' });
+  runtime.driver.history = async () => ({ moved: false, url: 'https://example.test/', title: '' });
+  await assert.rejects(
+    () => runtime.navigate({ pageId: PAGE_ID, type: 'back', sessionId: 's1' }),
+    /No back history entry/,
+  );
+});
+
+test('navigate rejects an unknown type', async () => {
+  const runtime = new Runtime({ config: {} });
+  await assert.rejects(
+    () => runtime.navigate({ pageId: PAGE_ID, type: 'jump', sessionId: 's1' }),
+    /type must be one of/,
+  );
+});
+
+test('history judges movement by the post-step identity, not goBack() return value', async () => {
+  // The reported bug: on a same-document history step Playwright returns null, so the
+  // old code reported failure even though the URL had changed. The driver must trust
+  // the identity read-back instead of the snippet's return value.
+  const driver = Object.create(PageDriver.prototype);
+  const codes = [];
+  driver.runCode = async (tab, options) => {
+    codes.push(options.code);
+    return { output: 'done', url: 'https://prev.test/', title: 'Prev' };
+  };
+  const result = await driver.history({ index: 1, url: 'https://now.test/', title: 'Now' }, 'back');
+  assert.equal(result.moved, true);
+  assert.equal(result.url, 'https://prev.test/');
+  assert.equal(result.title, 'Prev');
+  assert.match(codes[0], /page\.goBack\(\)/);
+});
+
+test('history reports no movement when the identity did not change', async () => {
+  const driver = Object.create(PageDriver.prototype);
+  driver.runCode = async () => ({ output: 'done', url: 'https://now.test/', title: 'Now' });
+  const result = await driver.history({ index: 1, url: 'https://now.test/', title: 'Now' }, 'forward');
+  assert.equal(result.moved, false);
+  assert.equal(result.url, 'https://now.test/');
 });
 
 

@@ -1,8 +1,8 @@
 import { Bridge, readJsonBody } from './src/bridge.js';
 import { Config } from './src/config.js';
-import { applyConfigChange, composeConfigValues, findRow, resetConfigKey } from './src/config-write.js';
+import { applyConfigChange, composeConfigValues, findRow, resetConfigKey, schemaDefaults } from './src/config-write.js';
 import { Runtime } from './src/runtime.js';
-import { createTools } from './src/tools.js';
+import { createTools, readLocale, selectTools } from './src/tools.js';
 
 export { Config };
 
@@ -65,6 +65,24 @@ const PACKAGE_NAME = '@local/dsh-browser-automation';
 const ROW_ID = 'browser-automation';
 
 /**
+ * The Client namespace dictionary, read from the packaged locale files.
+ *
+ * The panel and the settings card live in the page, and a client bundle cannot
+ * import JSON, so the Host serves the same files it already reads for `meta`.
+ * Editing `locale/*.json` is therefore the only place UI copy lives: the plugin
+ * page metadata and the client panel change together after a restart.
+ */
+let localeCache;
+function localePair() {
+  if (!localeCache) {
+    const en = readLocale('en');
+    const zh = readLocale('zh');
+    localeCache = { en: en.ui ?? {}, zh: zh.ui ?? {} };
+  }
+  return localeCache;
+}
+
+/**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {Record<string, unknown>} config
  */
@@ -85,6 +103,7 @@ export function apply(ctx, config) {
     screenshotTimeoutMs: read(source.screenshotTimeoutMs, 25_000),
     screenshotSettleMs: read(source.screenshotSettleMs, 1_200),
     debug: read(source.debug, false) === true,
+    disabledTools: read(source.disabledTools, ''),
   };
   // Plain copy for read-out: the settings card shows what this row is running with,
   // whether or not it can reach the form model.
@@ -99,6 +118,7 @@ export function apply(ctx, config) {
     screenshotTimeoutMs: settings.screenshotTimeoutMs,
     screenshotSettleMs: settings.screenshotSettleMs,
     debug: settings.debug,
+    disabledTools: settings.disabledTools,
   };
 
   const debug = settings.debug === true;
@@ -183,11 +203,22 @@ export function apply(ctx, config) {
   );
 
   const tools = createTools(runtime);
-  for (const tool of tools) {
+  // `disabledTools` is applied at registration: a disabled tool never enters the
+  // model's context, and a typo in the list is reported instead of silently doing
+  // nothing. The list takes effect after the row restarts (config writes only land
+  // in the profile patch).
+  const selection = selectTools(tools, settings.disabledTools);
+  for (const tool of selection.tools) {
     ctx.tools.register(tool);
   }
+  if (selection.unknown.length > 0) {
+    log(`disabledTools ignored unknown names: ${selection.unknown.join(', ')}`);
+  }
+  if (selection.tools.length !== tools.length) {
+    log(`tools disabled: ${selection.disabled.join(', ')}`);
+  }
 
-  log(`mounted ${tools.length} tools; bridge at ${ROUTE_PREFIX}`);
+  log(`mounted ${selection.tools.length} of ${tools.length} tools; bridge at ${ROUTE_PREFIX}`);
 }
 
 /**
@@ -252,16 +283,20 @@ async function serve({ request, response, runtime, bridge, settings, log, config
 
   try {
     switch (action) {
+      case 'locale': {
+        // Client UI copy. Served from locale/*.json so the panel, the settings card
+        // and the plugin-page metadata have one source; a client bundle cannot
+        // import JSON itself.
+        reply(response, 200, { ok: true, value: localePair() });
+        return;
+      }
       case 'config': {
         // The settings card's read path: the configuration the patch describes, not the
         // one this instance booted with.
         //
         // A write only reaches the profile patch; the running row keeps its booted
-        // values until the Loader re-applies it (a restart).
-        // Reporting the booted copy made the card snap back to the old value after every
-        // save, so the base here is the patch truth: schema/bundle values for this row
-        // (the booted copy is the fallback for keys the layers do not mention) with the
-        // profile override on top.
+        // values until the Loader re-applies it (a restart), so the card must not fall
+        // back to those booted values.
         const editor = configEditor();
         let reason = null;
         let row = null;
@@ -283,8 +318,12 @@ async function serve({ request, response, runtime, bridge, settings, log, config
             reason = `no profile row "${ROW_ID}"${near.length ? ` (rows like: ${near.join(', ')})` : ''}`;
           }
         }
-        // The override layer, so the card can badge and reset exactly the keys this
-        // profile decided on instead of guessing from the values.
+        // The card shows the configuration the patch describes, not the one this
+        // instance booted with. The base must be the *schema defaults*: using the
+        // booted values made "reset" appear to do nothing (the override was deleted,
+        // but the card fell back to the value the process started with, which was
+        // exactly the value being reset). Inherited values (a bundle patch) and the
+        // profile override stack on top.
         let overrides = {};
         let inherited = {};
         if (row) {
@@ -299,7 +338,7 @@ async function serve({ request, response, runtime, bridge, settings, log, config
             inherited = {};
           }
         }
-        const values = composeConfigValues({ base: runtime.config?.effective, inherited, override: overrides });
+        const values = composeConfigValues({ base: schemaDefaults(Config), inherited, override: overrides });
         reply(response, 200, {
           ok: true,
           value: {

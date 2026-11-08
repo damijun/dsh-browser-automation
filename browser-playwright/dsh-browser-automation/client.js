@@ -103,155 +103,9 @@ window.__ModuleLoader__.load({
     const PACKAGE_NAME = '@local/dsh-browser-automation';
     const ROW_ID = 'browser-automation';
 
-    const DICT = {
-      en: {
-        'panel.title': 'Browser automation',
-        'panel.guide': 'CDP, bridge, interpreter and this session\u2019s pages',
-        'panel.refresh': 'Refresh',
-        'panel.detach': 'Detach CLI',
-        'panel.attach': 'Reconnect',
-        'panel.connection': 'Connection',
-        'panel.interpreter': 'CLI interpreter',
-        'panel.modes': 'Start modes',
-        'panel.pages': 'Pages in this session',
-        'panel.empty': 'No controlled pages yet — ask for browser_open or browser_claim.',
-        'panel.loading': 'Working…',
-        'panel.unavailable': 'unavailable',
-        'panel.available': 'available',
-        'panel.open': 'open a new tab',
-        'panel.claim': 'take over the visible page',
-        'panel.detachHint': 'Detach ends the automation session: existing pageIds stop resolving.',
-        'panel.noSession': 'This tab is not bound to a session.',
-        'panel.clients': 'clients',
-        'panel.polls': 'held polls',
-        'panel.autoAttach': 'Startup attach',
-        'panel.autoAttachOk': 'attached',
-        'panel.autoAttachPending': 'connecting…',
-        'panel.autoAttachFailed': 'failed',
-        'panel.autoAttachOff': 'off (autoAttach: false)',
-        'cfg.title': 'Browser automation settings',
-        'cfg.summary': 'Sidebar browser automation',
-        'cfg.loading': 'Loading configuration…',
-        'cfg.save': 'Save',
-        'cfg.saving': 'Saving…',
-        'cfg.saved': 'Written to the profile patch. Restart DSH to apply it.',
-        'cfg.reset': 'Reset to default. Restart DSH to apply it.',
-        'cfg.resetField': 'Reset',
-        'cfg.readOnly':
-          'Read-only: this host does not serve the settings form. Edit cordis.patch.yml in the profile to change these values.',
-        'cfg.noService': 'no configForms service',
-        'cfg.noForm': 'no form for this row',
-        'cfg.writeHint': 'A save only writes the profile patch; restart DSH to apply it.',
-        'cfg.path': 'Profile patch: cordis.patch.yml → id: browser-automation',
-        'cfg.errNumber': '{key} must be a number.',
-        'cfg.field.nodePath': 'Node path',
-        'cfg.field.command': 'CLI command',
-        'cfg.field.session': 'CLI session name',
-        'cfg.field.timeoutMs': 'CLI timeout (ms)',
-        'cfg.field.requestTimeoutMs': 'Bridge timeout (ms)',
-        'cfg.field.screenshotSettleMs': 'Screenshot settle (ms)',
-        'cfg.field.debug': 'Debug logging',
-        'cfg.subtitle': 'Saved to this profile patch. Restart DSH to apply it.',
-        'cfg.auto': 'Auto',
-        'cfg.path': 'PATH',
-        'cfg.custom': 'Custom path',
-        'cfg.customPlaceholder': 'absolute path to node.exe,eg.C:\\Program Files\\nodejs\\node.exe',
-        'cfg.on': 'On',
-        'cfg.off': 'Off',
-        'cfg.overridden': 'overridden',
-        'cfg.desc.nodePath': 'Auto prefers the Node DSH ships, then PATH.',
-        'cfg.desc.command': 'Command name on PATH, or an absolute path of "playwright-cli.js".',
-        'cfg.desc.session': 'playwright-cli -s= name; every DSH session shares it.',
-        'cfg.desc.timeoutMs': 'Per-call timeout for one CLI invocation.',
-        'cfg.desc.requestTimeoutMs': 'How long a tool waits for the page half to answer.',
-        'cfg.field.attachTimeoutMs': 'Attach timeout (ms)',
-        'cfg.desc.attachTimeoutMs': 'How long the CLI may take to attach before one retry.',
-        'cfg.field.screenshotTimeoutMs': 'Capture timeout (ms)',
-        'cfg.desc.screenshotTimeoutMs': 'Deadline for one screenshot capture.',
-        'cfg.desc.screenshotSettleMs': 'Wait for a first frame after focusing a hidden tab.',
-        'cfg.desc.debug': 'Print bridge and CLI diagnostics to the host log.',
-        'cfg.field.autoAttach': 'Attach at startup',
-        'cfg.desc.autoAttach':
-          'Attach once when DSH starts, so sidebar pages opened afterwards are visible to the CLI. Costs one daemon process while DSH runs; only one DSH instance at a time.',
-    'chip.shared': 'shared with the agent',
-    'cfg.field.showSharedBadge': 'Shared page badge',
-        'cfg.desc.showSharedBadge':
-          'Show a small "driven by the agent" badge above the sidebar while the browser tab in view is controlled by this plugin. Nothing is painted into the page, and the badge ignores pointer events.',
-      },
-      zh: {
-        'panel.title': '浏览器自动化',
-        'panel.guide': '查看 CDP、桥、解释器与本会话的受控页面',
-        'panel.refresh': '刷新',
-        'panel.detach': '断开 CLI',
-        'panel.attach': '重新连接',
-        'panel.connection': '连接',
-        'panel.interpreter': 'CLI 解释器',
-        'panel.modes': '启动模式',
-        'panel.pages': '本会话的页面',
-        'panel.empty': '还没有受控页面 —— 让模型调用 browser_open 或 browser_claim。',
-        'panel.loading': '处理中…',
-        'panel.unavailable': '不可用',
-        'panel.available': '可用',
-        'panel.open': '新开标签页',
-        'panel.claim': '接管可见页',
-        'panel.detachHint': '断开即结束自动化会话：已有 pageId 会失效。',
-        'panel.noSession': '这个标签页没有绑定到会话。',
-        'panel.clients': '客户端',
-        'panel.polls': '挂起轮询',
-        'panel.autoAttach': '开机自动连接',
-        'panel.autoAttachOk': '已连接',
-        'panel.autoAttachPending': '连接中…',
-        'panel.autoAttachFailed': '失败',
-        'panel.autoAttachOff': '已关闭（autoAttach: false）',
-        'cfg.title': '浏览器自动化配置',
-        'cfg.summary': '侧边栏浏览器自动化',
-        'cfg.loading': '正在读取配置…',
-        'cfg.save': '保存',
-        'cfg.saving': '保存中…',
-        'cfg.saved': '已写入 profile patch。重启 DSH 后生效。',
-        'cfg.reset': '已恢复默认值。重启 DSH 后生效。',
-        'cfg.resetField': '恢复默认',
-        'cfg.readOnly': '只读：当前宿主没有提供设置表单。要改这些值，请编辑 profile 里的 cordis.patch.yml。',
-        'cfg.noService': '没有 configForms 服务',
-        'cfg.noForm': '这一行没有可编辑的表单',
-        'cfg.writeHint': '保存本身只写 profile patch；重启 DSH 后生效。',
-        'cfg.path': 'Profile patch：cordis.patch.yml → id: browser-automation',
-        'cfg.errNumber': '{key} 必须是数字。',
-        'cfg.field.nodePath': 'Node 路径',
-        'cfg.field.command': 'CLI 命令',
-        'cfg.field.session': 'CLI 会话名',
-        'cfg.field.timeoutMs': 'CLI 超时（ms）',
-        'cfg.field.requestTimeoutMs': '桥超时（ms）',
-        'cfg.field.screenshotSettleMs': '截图首帧等待（ms）',
-        'cfg.field.debug': '调试日志',
-        'cfg.subtitle': '只写入这个 profile 的 patch；重启 DSH 后生效。',
-        'cfg.auto': '自动',
-        'cfg.path': 'PATH',
-        'cfg.custom': '自定义路径',
-        'cfg.customPlaceholder': 'node.exe的绝对路径,例如C:\\Program Files\\nodejs\\node.exe',
-        'cfg.on': '开启',
-        'cfg.off': '关闭',
-        'cfg.overridden': '已覆盖',
-        'cfg.desc.nodePath': '自动：优先用 DSH 自带的 Node，其次是 PATH。',
-        'cfg.desc.command': 'PATH 上的命令名，或 playwright-cli.js 的绝对路径。',
-        'cfg.desc.session': 'playwright-cli 的 -s= 会话名；所有 DSH 会话共用。',
-        'cfg.desc.timeoutMs': '单次 CLI 调用的超时时间。',
-        'cfg.desc.requestTimeoutMs': '等页面半边回答的最长时间。',
-        'cfg.field.attachTimeoutMs': 'Attach 超时（ms）',
-        'cfg.desc.attachTimeoutMs': 'CLI 附着的最长等待，超时后重试一次。',
-        'cfg.field.screenshotTimeoutMs': '截图超时（ms）',
-        'cfg.desc.screenshotTimeoutMs': '单次截图抓取的最长等待。',
-        'cfg.desc.screenshotSettleMs': '把隐藏标签页切到前台后，等首帧的时间。',
-        'cfg.desc.debug': '把桥与 CLI 诊断打印到宿主日志。',
-        'cfg.field.autoAttach': '开机自动连接',
-        'cfg.desc.autoAttach':
-          'DSH 启动时先 attach 一次，之后打开的侧边栏页面才能被 CLI 看见。代价是运行期间常驻一个 daemon 进程；同时只能有一个 DSH 实例。',
-    'chip.shared': '正在与智能体共享',
-    'cfg.field.showSharedBadge': '共享页面标记',
-        'cfg.desc.showSharedBadge':
-          '当正在看的浏览器页由本插件控制时，在侧栏上方显示一个「由智能体驱动」的小浮标：不往页面里画任何东西，浮标也不接收点击。',
-      },
-    };
+    // All UI copy lives in locale/*.json. The Host serves it to this half through the
+    // bridge (locale action), so the panel, the settings card and the plugin-page
+    // metadata share one source of truth.
 
     const PANEL_CSS = [
       '.dshba{display:flex;flex-direction:column;gap:10px;padding:12px;height:100%;overflow:auto;',
@@ -279,9 +133,36 @@ window.__ModuleLoader__.load({
       '.dshba-err{border:1px solid var(--dsw-alias-state-error-primary);border-radius:8px;padding:8px;',
       'color:var(--dsw-alias-state-error-primary);white-space:pre-wrap}',
       '.dshba-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.dshba-setup{border-color:var(--dsw-alias-border-l2)}',
+      '.dshba-steps{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}',
+      '.dshba-cmd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:5px}',
+      '.dshba-cmd code{background:var(--dsw-alias-bg-layer-2);padding:2px 6px;border-radius:5px;',
+      'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}',
+      '.dshba-copy{flex:none}',
     ].join('');
 
     const baseName = (value) => String(value ?? '').split(/[\\/]/).pop();
+
+    /**
+     * Flatten the nested `ui` tree of locale/*.json into dotted locale keys, the
+     * shape `ctx.locale.register` and `t()` expect (`cfg.field.nodePath`).
+     *
+     * @param {Record<string, unknown>} tree
+     * @param {string} [prefix]
+     * @param {Record<string, string>} [out]
+     * @returns {Record<string, string>}
+     */
+    const flatten = (tree, prefix = '', out = {}) => {
+      for (const [key, value] of Object.entries(tree ?? {})) {
+        const path = prefix ? `${prefix}.${key}` : key;
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          flatten(value, path, out);
+        } else {
+          out[path] = String(value);
+        }
+      }
+      return out;
+    };
 
     /**
      * The guide row's glyph, matching `icon.svg` (a browser window whose title bar
@@ -608,6 +489,7 @@ window.__ModuleLoader__.load({
       return function BrowserAutomationPanel(props) {
         const sessionId = props && props.sessionId;
         const [state, setState] = React.useState({ phase: 'loading', data: null, error: null, busy: null });
+        const [copied, setCopied] = React.useState(null);
         const alive = React.useRef(true);
         const settleTimer = React.useRef(null);
         const settleRetries = React.useRef(0);
@@ -666,6 +548,45 @@ window.__ModuleLoader__.load({
         // `mine` is the Host's answer to exactly that question.
         const pages = ((data && data.pages) || []).filter((page) => page && page.pageId && page.mine === true);
         const busy = Boolean(state.busy);
+        // The setup guide is shown only when something is actually broken: a CDP record
+        // that does not answer, or a missing CLI. It is the same information the README
+        // gives, but where the user already is.
+        const diagnosis = (data && data.cdp && data.cdp.diagnosis) || null;
+        const cdpNeedsSetup = Boolean(diagnosis && diagnosis !== 'serving');
+
+        const copyCommand = (id, value) => {
+          try {
+            const result = navigator.clipboard && navigator.clipboard.writeText(value);
+            if (result && typeof result.then === 'function') {
+              result
+                .then(() => {
+                  setCopied(id);
+                  setTimeout(() => setCopied(null), 1_500);
+                })
+                .catch(() => {});
+            }
+          } catch (error) {
+            /* clipboard unavailable: the command stays selectable */
+          }
+        };
+
+        const copyButton = (id, value) =>
+          h(
+            'button',
+            {
+              key: `copy-${id}`,
+              type: 'button',
+              className: 'dshba-btn dshba-copy',
+              onClick: () => copyCommand(id, value),
+            },
+            copied === id ? t('panel.setup.copied') : t('panel.setup.copy'),
+          );
+
+        const commandRow = (id, value) =>
+          h('div', { key: `cmd-${id}`, className: 'dshba-cmd' }, [
+            h('code', { key: 'code', className: 'dshba-mono' }, value),
+            copyButton(id, value),
+          ]);
 
         return h('div', { className: 'dshba' }, [
           h('style', { key: 'css' }, PANEL_CSS),
@@ -687,7 +608,10 @@ window.__ModuleLoader__.load({
             h('div', { key: 'label', className: 'dshba-label' }, t('panel.connection')),
             h('div', { key: 'cdp', className: 'dshba-row' }, [
               h('span', { key: 'k' }, 'CDP'),
-              dot(Boolean(data && data.attached), data && data.attached ? 'connected' : 'disconnected'),
+              dot(
+                Boolean(data && data.attached),
+                data && data.attached ? t('panel.connected') : t('panel.disconnected'),
+              ),
               h('span', { key: 'url', className: 'dshba-mono dshba-label' }, dash(data && data.cdpUrl)),
               // The URL alone cannot explain a failure: "stale" (a leftover endpoint holds
               // the port) and "absent" (no flag, or DSH gone) look identical from here and
@@ -712,6 +636,39 @@ window.__ModuleLoader__.load({
               ? h('div', { key: 'be', className: 'dshba-warn dshba-mono' }, String(data.bridgeError))
               : null,
           ]),
+
+          cdpNeedsSetup
+            ? h('div', { key: 'setup-cdp', className: 'dshba-card dshba-setup' }, [
+                h('div', { key: 'label', className: 'dshba-label' }, t('panel.setup.title')),
+                h(
+                  'div',
+                  { key: 'intro', className: 'dshba-warn' },
+                  t('panel.setup.cdp').replace('{diagnosis}', diagnosis),
+                ),
+                diagnosis === 'stale'
+                  ? h('div', { key: 'stale', className: 'dshba-warn' }, t('panel.setup.stale'))
+                  : null,
+                h('ol', { key: 'steps', className: 'dshba-steps' }, [
+                  h('li', { key: 'quit' }, t('panel.setup.quit')),
+                  h('li', { key: 'shortcut' }, [
+                    t('panel.setup.shortcut'),
+                    commandRow('cdp', '--remote-debugging-port=0'),
+                  ]),
+                  h('li', { key: 'restart' }, t('panel.setup.restart')),
+                  h('li', { key: 'docs', className: 'dshba-label' }, t('panel.setup.docs')),
+                ]),
+              ])
+            : null,
+
+          data && !resolved && diagnosis === 'serving'
+            ? h('div', { key: 'setup-cli', className: 'dshba-card dshba-setup' }, [
+                h('div', { key: 'label', className: 'dshba-label' }, t('panel.setup.title')),
+                h('div', { key: 'title', className: 'dshba-warn' }, t('panel.setup.cliTitle')),
+                h('div', { key: 'intro', className: 'dshba-label' }, t('panel.setup.cli')),
+                commandRow('cli', 'npm install -g @playwright/cli@latest'),
+                h('div', { key: 'after', className: 'dshba-label' }, t('panel.setup.after')),
+              ])
+            : null,
 
           h('div', { key: 'cli', className: 'dshba-card' }, [
             h('div', { key: 'label', className: 'dshba-label' }, t('panel.interpreter')),
@@ -741,7 +698,7 @@ window.__ModuleLoader__.load({
               h('div', { key: page.pageId, className: 'dshba-page' }, [
                 h('div', { key: 'row', className: 'dshba-row' }, [
                   h('span', { key: 'pid', className: 'dshba-mono' }, page.pageId),
-                  page.current ? h('span', { key: 'cur', className: 'dshba-tag' }, 'current') : null,
+                  page.current ? h('span', { key: 'cur', className: 'dshba-tag' }, t('panel.current')) : null,
                   page.source ? h('span', { key: 'src', className: 'dshba-tag' }, page.source) : null,
                 ]),
                 h('div', { key: 'title', className: 'dshba-url' }, dash(page.title)),
@@ -788,6 +745,7 @@ window.__ModuleLoader__.load({
       { key: 'screenshotSettleMs', kind: 'number' },
       { key: 'autoAttach', kind: 'boolean' },
       { key: 'showSharedBadge', kind: 'boolean' },
+      { key: 'disabledTools', kind: 'text' },
       { key: 'debug', kind: 'boolean' },
     ];
 
@@ -1502,132 +1460,6 @@ window.__ModuleLoader__.load({
         return { visible: false, tabId: focusId, expanded, expandedNow, expandVia, expandError };
       }
 
-      /**
-       * Close the sidebar tab itself.
-       *
-       * `playwright-cli tab-close` only destroys the CDP target: the sidebar tab
-       * survives as an empty shell showing "页面加载失败；请刷新重试或在系统浏览器中打开。",
-       * and stays focused. Only the sidebar controller can remove the tab, so this
-       * is a UI action like `openTab`, not a CLI one.
-       *
-       * @param {string} sessionId
-       * @param {string} tabId the sidebar's own tab id, when the Host knows it
-       * @param {string} url the page URL, the fallback when no tab id exists
-       */
-      async function closePage(sessionId, tabId, url) {
-        const service = sidebar();
-        if (!service || typeof service.close !== 'function') {
-          return { closed: false, tabId: null, reason: 'the sidebar-right client service cannot close tabs' };
-        }
-        // Look only inside the owning conversation: tab ids repeat per conversation, so a
-        // document-wide lookup could close a same-numbered tab in the conversation
-        // that happens to be on screen.
-        const rootFor = (owner) =>
-          typeof owner === "string" && owner !== ""
-            ? document.querySelector(`[data-sidebar-right-session="${owner}"]`)
-            : document;
-        const root = rootFor(sessionId);
-        if (!root) {
-          return {
-            closed: false,
-            tabId: null,
-            reason: `the sidebar of conversation ${sessionId} is not mounted, so its tab cannot be closed from here`,
-          };
-        }
-        const mounted = typeof service.mounted?.getSnapshot === "function" ? service.mounted.getSnapshot() : null;
-        const owner = typeof sessionId === "string" && sessionId !== "" ? sessionId : mounted;
-        const pane = paneFor({ tabId, url }, root);
-        const resolved = tabId || tabIdOf(pane);
-        if (!resolved) {
-          return {
-            closed: false,
-            tabId: null,
-            reason:
-              "no sidebar tab matches this page (the tab may already be gone, or the Host has no tab id for it)",
-          };
-        }
-        const workspace = (() => {
-          try {
-            return typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
-          } catch (error) {
-            return null;
-          }
-        })();
-        const canSwitch = Boolean(workspace && typeof workspace.openSession === "function" && mounted);
-        const visible = (who) =>
-          [...document.querySelectorAll(`[data-sidebar-right-session="${who}"]`)].some((element) => {
-            const rect = element.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-          });
-        let switched = false;
-        try {
-          if (owner && mounted && owner !== mounted) {
-            if (!canSwitch) {
-              return {
-                closed: false,
-                tabId: resolved,
-                reason:
-                  `conversation ${owner} is not on screen and this DSH build cannot select it, so its tab ` +
-                  "cannot be closed from here. Close it in that conversation.",
-              };
-            }
-            // `closeIn` is silent for a conversation without an adopted store, and
-            // `close` addresses the on-screen strip — so select the owner, close its tab
-            // normally, and switch back.
-            switched = true;
-            workspace.openSession(owner);
-            const until = Date.now() + 3_000;
-            while (!visible(owner) && Date.now() < until) await sleep(100);
-          }
-          service.close(resolved);
-        } catch (error) {
-          return { closed: false, tabId: resolved, reason: error && error.message ? error.message : String(error) };
-        } finally {
-          if (switched) {
-            try {
-              workspace.openSession(mounted);
-            } catch (error) {}
-          }
-        }
-        // Verify against the controller's own tab list, which knows about tabs the DOM
-        // no longer shows; the DOM lookup is the fallback for builds without it.
-        const listed = () => {
-          try {
-            if (typeof service.tabsIn === "function") {
-              return [...service.tabsIn(owner)].map((tab) => tab.tabId ?? tab.id);
-            }
-          } catch (error) {}
-          try {
-            const snapshot =
-              service.openTabs && typeof service.openTabs.getSnapshot === "function"
-                ? service.openTabs.getSnapshot()
-                : null;
-            if (Array.isArray(snapshot)) {
-              return snapshot
-                .filter((tab) => !tab.sessionId || tab.sessionId === owner)
-                .map((tab) => tab.tabId);
-            }
-          } catch (error) {}
-          return null;
-        };
-        const until = Date.now() + 2_000;
-        for (;;) {
-          const ids = listed();
-          const stillThere = ids ? ids.includes(resolved) : Boolean(paneFor({ tabId: resolved }, root));
-          if (!stillThere) break;
-          if (Date.now() >= until) {
-            return {
-              closed: false,
-              tabId: resolved,
-              reason:
-                `the sidebar still lists tab ${resolved} of conversation ${owner} after closing it, so the tab was ` +
-                "not removed. Try again from that conversation.",
-            };
-          }
-          await sleep(150);
-        }
-        return { closed: true, tabId: resolved };
-      }
       /** @param {{ requestId: string, kind: string, url?: string, pageId?: string }} command */
       async function handle(command) {
         if (command.kind === 'open-tab') {
@@ -1651,15 +1483,6 @@ window.__ModuleLoader__.load({
         }
         if (command.kind === 'prepare-capture') {
           const value = await prepareCapture(String(command.tabId ?? ''), String(command.url ?? ''));
-          await call('result', { requestId: command.requestId, ok: true, value });
-          return;
-        }
-        if (command.kind === 'close-page') {
-          const value = await closePage(
-            String(command.sessionId ?? ''),
-            String(command.tabId ?? ''),
-            String(command.url ?? ''),
-          );
           await call('result', { requestId: command.requestId, ok: true, value });
           return;
         }
@@ -1723,27 +1546,58 @@ window.__ModuleLoader__.load({
        * body registers into `sidebar.right.pane.tab` under that id and receives
        * `sessionId` as a prop. Both are owned by this effect, so they disappear with
        * the plugin instead of leaving a tab with no body.
+       *
+       * The strings themselves live in `locale/*.json`; the Host serves them through
+       * the bridge (`locale` action) because a client bundle cannot import JSON. Until
+       * the payload arrives, `t` returns the key; registering a dictionary re-renders
+       * mounted UI, so the start-page capsule and an open panel pick it up without a
+       * reload. The fetch is retried because this half can load before the route is
+       * mounted, and a Host too old to serve it simply leaves the keys visible.
        */
       ctx.effect(
         () => {
           const disposers = [];
-          let t = (key) => DICT.en[key] ?? key;
-          try {
-            const disposeLocale = ctx.locale.register(LOCALE_NS, DICT);
-            if (typeof disposeLocale === 'function') disposers.push(disposeLocale);
-            const bound = ctx.locale.bind(LOCALE_NS);
-            t = (key) => {
-              try {
-                const value = bound(key);
-                if (typeof value === 'string' && value !== key) return value;
-              } catch (error) {
-                /* fall through to the built-in English copy */
+          let disposed = false;
+          let bound = (key) => key;
+          const t = (key) => {
+            try {
+              const value = bound(key);
+              if (typeof value === 'string' && value !== key) return value;
+            } catch (error) {
+              /* fall through to the key */
+            }
+            return key;
+          };
+
+          const loadLocale = async (attempt = 0) => {
+            if (disposed) return;
+            try {
+              const dicts = await call('locale', {}, 10_000);
+              if (disposed) return;
+              if (!dicts || !dicts.en || !dicts.zh) throw new Error('locale payload is empty');
+              const dispose = ctx.locale.register(LOCALE_NS, {
+                en: flatten(dicts.en),
+                zh: flatten(dicts.zh),
+              });
+              if (disposed) {
+                if (typeof dispose === 'function') dispose();
+                return;
               }
-              return DICT.en[key] ?? key;
-            };
-          } catch (error) {
-            console.warn(`[dsh-browser-automation] locale registration skipped: ${error.message}`);
-          }
+              if (typeof dispose === 'function') disposers.push(dispose);
+              bound = ctx.locale.bind(LOCALE_NS);
+            } catch (error) {
+              if (disposed) return;
+              if (attempt < 5) {
+                setTimeout(() => loadLocale(attempt + 1), 1_000 * (attempt + 1));
+              } else {
+                console.warn(`[dsh-browser-automation] locale unavailable: ${error.message}`);
+              }
+            }
+          };
+          // Deferred by one tick so the bridge's `hello` is this page's first request;
+          // the locale payload does not depend on which of the two lands first, but a
+          // predictable order keeps the panel's own diagnostics first in the log.
+          setTimeout(() => loadLocale(), 0);
           try {
             disposers.push(
               ctx.sidebarRightTabs.register({
@@ -1803,6 +1657,7 @@ window.__ModuleLoader__.load({
             console.warn(`[dsh-browser-automation] status panel could not register: ${error.message}`);
           }
           return () => {
+            disposed = true;
             for (const dispose of disposers) {
               try {
                 dispose();
