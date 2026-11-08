@@ -8,5 +8,8 @@ page-*.yml
 page-*.png
 *.log
 
+# Package artifacts
+*.tgz
+
 # drafts
 icon-concepts/

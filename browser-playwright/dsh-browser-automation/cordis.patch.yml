@@ -5,7 +5,7 @@
 # ctx.sidebarRight.openTab.
 - insert:
     - id: browser-automation
-      name: '@local/dsh-browser-automation'
+      name: 'dsh-browser-automation'
       config:
         # playwright-cli session name (`-s=`). One session is shared by every
         # DSH session; the page identity (its session digest), not the CLI

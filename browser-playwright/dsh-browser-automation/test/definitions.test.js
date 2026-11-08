@@ -265,7 +265,7 @@ test('client.js is syntactically valid JavaScript', () => {
   const source = read('../client.js');
   assert.doesNotThrow(() => new Function(source));
   assert.match(source, /window\.__ModuleLoader__\.load/);
-  assert.match(source, /id: '@local\/dsh-browser-automation'/);
+  assert.match(source, /id: 'dsh-browser-automation'/);
   assert.match(source, /inject: \['sidebarRight', 'layout', 'slots', 'sidebarRightTabs', 'locale'\]/);
   // The bridge must stay document-relative: an absolute origin would break the
   // Desktop `dsh-app://app/` carrier (the protocol is named only in the comment).
@@ -298,7 +298,7 @@ test('the bridge registers a prefix without a trailing slash and slices with it'
 
 test('package.json wires both halves and the locale resources', () => {
   const manifest = JSON.parse(read('../package.json'));
-  assert.equal(manifest.name, '@local/dsh-browser-automation');
+  assert.equal(manifest.name, 'dsh-browser-automation');
   assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml');
   assert.equal(manifest.dsh.client.platform, 'web');
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-sidebar-right'));
@@ -315,7 +315,7 @@ test('package.json wires both halves and the locale resources', () => {
   }
   const patch = read('../cordis.patch.yml');
   assert.match(patch, /id: browser-automation/);
-  assert.match(patch, /name: '@local\/dsh-browser-automation'/);
+  assert.match(patch, /name: 'dsh-browser-automation'/);
 });
 
 test('page ids are unique, well formed and session-tagged', () => {

@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-browser-automation',
+  id: 'dsh-browser-automation',
   factory(require) {
     /**
      * Client half of the sidebar-browser automation plugin.
@@ -94,13 +94,13 @@ window.__ModuleLoader__.load({
      * `sessionId`. The chip title is captured at open time, hence the localized
      * `title()`.
      */
-    const PANEL_ID = '@local/dsh-browser-automation/panel';
+    const PANEL_ID = 'dsh-browser-automation/panel';
     const PANEL_KIND = 'browser-automation';
     const LOCALE_NS = 'browser-automation';
     // The package name and row id this bundle's configuration belongs to: the
     // Plugins page seats a bundle's settings by package name, and the form model is
     // addressed by the row id the patch declares.
-    const PACKAGE_NAME = '@local/dsh-browser-automation';
+    const PACKAGE_NAME = 'dsh-browser-automation';
     const ROW_ID = 'browser-automation';
 
     // All UI copy lives in locale/*.json. The Host serves it to this half through the

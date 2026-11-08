@@ -36,7 +36,7 @@ const read = (value, fallback) => {
  * bridge carries that one request; every page operation goes through the CLI.
  */
 
-export const name = '@local/dsh-browser-automation';
+export const name = 'dsh-browser-automation';
 
 export const inject = ['tools', 'webServer'];
 
@@ -61,7 +61,7 @@ const ROUTE_REGISTRATION = ROUTE_PREFIX.slice(0, -1);
  * configuration lives in `plugins.bundle.config` keyed by PACKAGE_NAME, and the row
  * id is what the settings service addresses when it builds a form for one entry.
  */
-const PACKAGE_NAME = '@local/dsh-browser-automation';
+const PACKAGE_NAME = 'dsh-browser-automation';
 const ROW_ID = 'browser-automation';
 
 /**

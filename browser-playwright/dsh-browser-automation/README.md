@@ -6,6 +6,8 @@
 > **仅支持 Windows 版 DSH 桌面端。** 插件依赖 Electron 的 CDP 端点、`%APPDATA%` 下的
 > `DevToolsActivePort` 记录和 `playwright-cli.cmd` shim；Web 版没有可附加的 CDP 端点，
 > macOS/Linux 桌面端未验证。连不上时插件按 `diagnosis` 报出具体原因。
+>
+> 版本与变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -35,11 +37,16 @@
 
 ---
 
-## 2. 安装与前置条件
+## 2. 安装与前置条件（Windows）
 
-本地开发：插件目录以 junction 装进 `desktop` profile（bundle `@local/dsh-browser-automation`，row `browser-automation`）。
+**安装（发布版）**：
+
+- DSH 桌面端：**Settings → Plugins**，搜索并安装 `dsh-browser-automation`；
+- 或 CLI：`dsh plugin add dsh-browser-automation`；
+- npm：[`dsh-browser-automation`](https://www.npmjs.com/package/dsh-browser-automation)。
+
+**本地开发**：插件目录以 junction 装进 `desktop` profile（row `browser-automation`）。
 重新安装用 Plugin Manager 的 `install_bundle`，`target` 指向本目录；不要手改 profile 的 `package.json`。
-发布后则是 `dsh plugin add <包名>` 或插件页安装。
 
 装完还差两步；缺哪一步，面板里都会出现同样的引导（§2.4）。
 
@@ -381,7 +388,7 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 
 ```yaml
 - id: browser-automation
-  name: '@local/dsh-browser-automation'
+  name: 'dsh-browser-automation'
   config:
     debug: true
 ```
@@ -421,7 +428,7 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 
 ```yaml
 - id: browser-automation
-  name: '@local/dsh-browser-automation'
+  name: 'dsh-browser-automation'
   config:
     session: dsh                 # playwright-cli -s=；所有 DSH 会话共用一个
     cdpPortFile: auto            # DevToolsActivePort 的位置；auto = %APPDATA%\@deepseek-ai\dsh-desktop\
@@ -458,7 +465,7 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
 
 ```yaml
 - id: browser-automation
-  name: '@local/dsh-browser-automation'
+  name: 'dsh-browser-automation'
   config:
     disabledTools: browser_console, browser_press
 ```
@@ -743,16 +750,18 @@ node --test
     -Target "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\@deepseek-ai\schemastery"
   ```
 
-### 发布清单
+### 发布
 
-- `private: true` 发布前去掉；`name` 改成你的 scope（现在是 `@local/dsh-browser-automation`）；
-  `version` 建议随功能升到 `0.2.0`。
-- 加 `LICENSE`（MIT 正文），并加进 `files`。
-- 补 `repository` / `homepage` / `bugs`（插件市场会读）。
-- 补 `engines.dsh`（例如 `>=0.2.1-rc.2 <0.3.0-0`）：市场用它判断 DSH 兼容性，未声明会显示"未声明"。
-- `files` 只含运行时文件；如果写文档，`docs/*.md` 会一起发出去。
-- 发布前跑 `npm test`（181 用例）。
-- 标题/描述/图标来自 `locale/{en,zh}.json` 与 `icon.svg`（矢量，插件页当封面用）。
+包名 `dsh-browser-automation`，当前版本 `0.2.0`；`LICENSE`、`repository`/`homepage`/`bugs`、
+`engines.dsh`、`CHANGELOG.md` 已补齐。
+
+发布步骤（手动）见仓库根目录
+[`RELEASE.md`](https://github.com/damijun/browser-playwright/blob/main/RELEASE.md)：
+`npm publish` → 在干净 profile 安装验证 → `git tag v0.2.0` → 向 awesome-dsh-plugin 提一条 entry 的 PR。
+
+发布前 `npm test`（181 用例）与 `npm pack --dry-run` 已由 `prepublishOnly` / CI 覆盖。
+
+标题/描述/图标来自 `locale/{en,zh}.json` 与 `icon.svg`（矢量，插件页当封面用）。
 
 
 

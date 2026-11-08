@@ -1,21 +1,33 @@
 {
-  "name": "@local/dsh-browser-automation",
-  "version": "0.1.0",
-  "private": true,
+  "name": "dsh-browser-automation",
+  "version": "0.2.0",
   "description": "Drive the Windows DSH Desktop right-sidebar browser through playwright-cli, with a per-session page identity.",
   "keywords": [
     "deepseek-harness",
     "dsh",
-    "plugin",
+    "dsh-plugin",
     "browser-automation",
     "playwright",
+    "playwright-cli",
     "sidebar",
-    "cdp"
+    "cdp",
+    "windows"
   ],
   "license": "MIT",
+  "author": "damijun",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/damijun/browser-playwright.git",
+    "directory": "dsh-browser-automation"
+  },
+  "homepage": "https://github.com/damijun/browser-playwright/tree/main/dsh-browser-automation#readme",
+  "bugs": {
+    "url": "https://github.com/damijun/browser-playwright/issues"
+  },
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "dsh": ">=0.2.1-rc.2 <0.3.0-0"
   },
   "exports": {
     ".": "./index.js",
@@ -28,12 +40,16 @@
     "client.js",
     "cordis.patch.yml",
     "src/**/*.js",
-    "docs/*.md",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node --test --test-timeout=30000 test/*.test.js"
+    "test": "node --test --test-timeout=30000 test/*.test.js",
+    "prepublishOnly": "npm test",
+    "pack:check": "npm pack --dry-run"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "~3.18.4"

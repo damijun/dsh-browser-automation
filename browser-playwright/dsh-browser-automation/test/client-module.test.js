@@ -219,7 +219,7 @@ const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
 test('the client module loads through the page module loader', () => {
   const { loaded } = harness();
   assert.ok(loaded, 'the module never called window.__ModuleLoader__.load');
-  assert.equal(loaded.id, '@local/dsh-browser-automation');
+  assert.equal(loaded.id, 'dsh-browser-automation');
   const plugin = loaded.factory(requireStub());
   assert.equal(
     JSON.stringify(plugin.inject),
@@ -241,7 +241,7 @@ test('apply registers the panel tab type, its body and its strings', async () =>
 
   const tabType = registrations.find((entry) => entry[0] === 'tabType');
   assert.ok(tabType, 'no tab type was registered');
-  assert.equal(tabType[1], '@local/dsh-browser-automation/panel');
+  assert.equal(tabType[1], 'dsh-browser-automation/panel');
   assert.equal(tabType[2], 'browser-automation');
   // Without a guide entry the panel only exists behind a chip or a tool call.
   const guide = tabType[3];
@@ -253,7 +253,7 @@ test('apply registers the panel tab type, its body and its strings', async () =>
   const body = registrations.find((entry) => entry[0] === 'slot');
   assert.ok(body, 'no body was registered');
   assert.equal(body[1], 'sidebar.right.pane.tab');
-  assert.equal(body[2], '@local/dsh-browser-automation/panel', 'the body must key on the type id');
+  assert.equal(body[2], 'dsh-browser-automation/panel', 'the body must key on the type id');
   assert.equal(body[3], 'function');
 
   assert.ok(
@@ -264,7 +264,7 @@ test('apply registers the panel tab type, its body and its strings', async () =>
   // The configuration card sits on this bundle's page in the Plugins view.
   const seat = registrations.find((entry) => entry[0] === 'slot' && entry[1] === 'plugins.bundle.config');
   assert.ok(seat, 'no configuration card was registered');
-  assert.equal(seat[2], '@local/dsh-browser-automation', 'the seat is keyed by package name');
+  assert.equal(seat[2], 'dsh-browser-automation', 'the seat is keyed by package name');
   assert.equal(seat[3], 'function');
   assert.ok(
     registrations.some((entry) => entry[0] === 'inject' && entry[1] === 'plugins.bundle.config'),
