@@ -2,11 +2,11 @@
 
 这个文件是给自己用的发布清单。自动化能做的部分已经放进仓库；**npm 发布和 GitHub 操作需要你亲自执行**。
 
-当前包元数据（`dsh-browser-automation/package.json`）：
+当前包元数据（仓库根目录的 `package.json`）：
 
 - name: `dsh-browser-automation`（未 scoped；发布前可用 `npm view dsh-browser-automation` 再确认一次没被占用）
 - version: `0.2.0`
-- repository: `https://github.com/damijun/browser-playwright`，`directory: dsh-browser-automation`
+- repository: `https://github.com/damijun/browser-playwright`（仓库根目录就是包根目录）
 - engines: Node `>=22`，DSH `>=0.2.1-rc.2 <0.3.0-0`
 - license: MIT（`LICENSE` 已在包内）
 
@@ -22,7 +22,7 @@
 ## 1. 本地验证
 
 ```powershell
-cd dsh-browser-automation
+# 在仓库根目录
 npm test                 # 181 项
 npm pack --dry-run       # 检查包内容：README/LICENSE/locale/icon/src 等
 ```
@@ -32,7 +32,7 @@ npm pack --dry-run       # 检查包内容：README/LICENSE/locale/icon/src 等
 ## 2. 发布到 npm
 
 ```powershell
-cd dsh-browser-automation
+# 在仓库根目录
 npm publish
 ```
 
@@ -76,7 +76,9 @@ git push origin main --tags
 
 不用 Actions 也可以，第 2 步的本机 `npm publish` 就够了。
 
-## 7. 改名后的本机重装
+## 7. 改名 + 扁平化后的本机重装
 
-包名从 `@local/dsh-browser-automation` 改成了 `dsh-browser-automation`。本机 profile 里那条 junction
-仍然指向旧包名，**重启 DSH 前需要在 Settings → Plugins 里重新安装本目录**，否则旧行会加载失败。
+包名从 `@local/dsh-browser-automation` 改成了 `dsh-browser-automation`，仓库也从
+`browser-playwright/dsh-browser-automation` 扁平化到了仓库根目录。本机 profile 里那条 junction
+仍然指向旧名字/旧路径，**重启 DSH 前需要在 Settings → Plugins 里移除旧行、从仓库根目录重新安装**，
+否则旧行会加载失败。

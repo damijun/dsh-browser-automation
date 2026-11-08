@@ -741,7 +741,7 @@ node --test
 - **发布安装**（`dsh plugin add` / 插件市场）：pnpm 把它装进 profile 的 `node_modules`，`import` 正常解析，用户无感。
 - **本地开发**（本仓库的插件目录以 junction 链进 profile）：Node 解析裸包名是从**文件的真实路径**往上找
   `node_modules`，而真实路径在 dev 仓库里，那里没有这份依赖 —— 所以本地建了一个
-  `dsh-browser-automation/node_modules/@deepseek-ai/schemastery` 的 junction 指向 profile 里的副本。
+  `node_modules/@deepseek-ai/schemastery` 的 junction 指向 profile 里的副本。
   它只服务本地开发，已被 `.gitignore`（`node_modules/`）排除，**不进仓库、也不进 npm 包**。
   换机器后重建一次即可（或直接在插件目录 `pnpm install`）：
 

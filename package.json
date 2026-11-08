@@ -18,12 +18,11 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/damijun/browser-playwright.git",
-    "directory": "dsh-browser-automation"
+    "url": "git+https://github.com/damijun/dsh-browser-automation.git"
   },
-  "homepage": "https://github.com/damijun/browser-playwright/tree/main/dsh-browser-automation#readme",
+  "homepage": "https://github.com/damijun/dsh-browser-automation#readme",
   "bugs": {
-    "url": "https://github.com/damijun/browser-playwright/issues"
+    "url": "https://github.com/damijun/dsh-browser-automation/issues"
   },
   "engines": {
     "node": ">=22",

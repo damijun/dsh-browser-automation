@@ -11,9 +11,6 @@ jobs:
       fail-fast: false
       matrix:
         node: [22, 24]
-    defaults:
-      run:
-        working-directory: dsh-browser-automation
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

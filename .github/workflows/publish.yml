@@ -12,9 +12,6 @@ permissions:
 jobs:
   publish:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: dsh-browser-automation
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
