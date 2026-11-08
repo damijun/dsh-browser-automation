@@ -7,3 +7,6 @@ node_modules/
 page-*.yml
 page-*.png
 *.log
+
+# drafts
+icon-concepts/
