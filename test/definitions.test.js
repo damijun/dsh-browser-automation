@@ -458,7 +458,12 @@ test('discover attributes pages by session tag even without a registry entry', (
   assert.equal(discoveredOwn[0].source, 'discovered');
 });
 
-test('a command that a page never answers is re-queued for the next poll', async () => {
+test('a command that a page never answers is re-queued for the next poll', async (t) => {
+  // The bridge unrefs its timers so it can never hold the Host open; a test that
+  // waits on one must keep the loop alive, or Node 22 cancels the pending promise.
+  const keepAlive = setTimeout(() => {}, 5_000);
+  t.after(() => clearTimeout(keepAlive));
+
   const bridge = new Bridge({ pollTimeoutMs: 400, requestTimeoutMs: 3_000, deliveryTimeoutMs: 60 });
   bridge.hello('live', {});
   // Two held polls: the older one stands for a page that already reloaded, so its
@@ -506,7 +511,10 @@ test('a poll can refresh capabilities without a new welcome', () => {
   assert.equal(bridge.snapshot().clients[0].mounted, 'session-1');
 });
 
-test('the bridge holds a poll until a command exists and settles it', async () => {
+test('the bridge holds a poll until a command exists and settles it', async (t) => {
+  const keepAlive = setTimeout(() => {}, 5_000);
+  t.after(() => clearTimeout(keepAlive));
+
   const bridge = new Bridge({ pollTimeoutMs: 200, requestTimeoutMs: 500 });
   assert.equal(bridge.hasClient(), false);
   await assert.rejects(() => bridge.request('open-tab', { url: 'https://a.test/' }), /No DSH page is connected/);
@@ -535,7 +543,10 @@ test('the bridge holds a poll until a command exists and settles it', async () =
   assert.equal(bridge.snapshot().queuedCommands, 0);
 });
 
-test('the bridge rejects a failed result and times out a silent page', async () => {
+test('the bridge rejects a failed result and times out a silent page', async (t) => {
+  const keepAlive = setTimeout(() => {}, 5_000);
+  t.after(() => clearTimeout(keepAlive));
+
   const bridge = new Bridge({ pollTimeoutMs: 100, requestTimeoutMs: 100 });
   bridge.hello('client-1');
   const opened = bridge.nextCommand('client-1', 100);
