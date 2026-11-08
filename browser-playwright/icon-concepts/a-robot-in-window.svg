@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Browser automation: a robot inside a browser window">
+  <circle cx="32" cy="4.6" r="2.4" fill="#8FBCFF"/>
+  <path d="M32 9.4V6.4" fill="none" stroke="#2F7BF0" stroke-width="2.2" stroke-linecap="round"/>
+  <rect x="4" y="9" width="56" height="47" rx="10" fill="#1F6FEB"/>
+  <path d="M4 19a10 10 0 0 1 10-10h36a10 10 0 0 1 10 10v2H4z" fill="#1550B8"/>
+  <circle cx="11.5" cy="15" r="1.9" fill="#CFE3FF"/>
+  <circle cx="18.5" cy="15" r="1.9" fill="#CFE3FF" opacity=".7"/>
+  <circle cx="25.5" cy="15" r="1.9" fill="#CFE3FF" opacity=".45"/>
+  <rect x="14.6" y="33" width="3.8" height="10" rx="1.9" fill="#BFD9FF"/>
+  <rect x="45.6" y="33" width="3.8" height="10" rx="1.9" fill="#BFD9FF"/>
+  <rect x="18" y="26" width="28" height="23" rx="8" fill="#F6FAFF"/>
+  <circle cx="26.4" cy="36" r="2.9" fill="#12408F"/>
+  <circle cx="37.6" cy="36" r="2.9" fill="#12408F"/>
+  <rect x="27.2" y="41.8" width="9.6" height="2.8" rx="1.4" fill="#9CC0FF"/>
+</svg>

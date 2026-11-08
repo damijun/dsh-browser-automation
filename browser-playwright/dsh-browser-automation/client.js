@@ -284,27 +284,35 @@ window.__ModuleLoader__.load({
     const baseName = (value) => String(value ?? '').split(/[\\/]/).pop();
 
     /**
-     * The guide row's glyph, matching `icon.svg` (a window with a play bubble).
+     * The guide row's glyph, matching `icon.svg` (a browser window whose title bar
+     * is a robot visor, with a click cursor on the page).
      *
      * The guide renders `entry.icon` as a node, so this has to be a component and
      * not the file path: without one the row is the only blank leading slot in the
      * start page's list.
+     *
+     * This is the 16px mono reduction of the cover: the page cursor and the two
+     * content lines are dropped because at that size they collapse into noise. What
+     * survives is the window silhouette, the antenna and the two knocked-out eyes,
+     * which are what makes the row recognizable.
      */
     function panelIcon(props) {
       const size = (props && props.size) || 16;
       const h = React.createElement;
       return h('svg', { width: size, height: size, viewBox: '0 0 64 64', fill: 'none', 'aria-hidden': 'true' }, [
-        h('rect', { key: 'body', x: 4, y: 8, width: 56, height: 48, rx: 8, fill: 'currentColor', opacity: 0.9 }),
-        h('rect', { key: 'bar', x: 4, y: 8, width: 56, height: 13, rx: 8, fill: 'currentColor' }),
-        h('circle', { key: 'd1', cx: 11, cy: 14.5, r: 2, fill: 'var(--dsw-alias-bg-base)' }),
-        h('circle', { key: 'd2', cx: 18, cy: 14.5, r: 2, fill: 'var(--dsw-alias-bg-base)' }),
-        h('circle', { key: 'd3', cx: 25, cy: 14.5, r: 2, fill: 'var(--dsw-alias-bg-base)' }),
+        h('circle', { key: 'antenna', cx: 32, cy: 3.8, r: 2.3, fill: 'currentColor' }),
         h('path', {
-          key: 'bubble',
-          d: 'M32 26c8.3 0 15 5.6 15 12.5 0 2.6-1 5-2.8 7l2.2 5.5-5.6-2.6c-2.5 1.7-5.6 2.6-8.8 2.6-8.3 0-15-5.6-15-12.5S23.7 26 32 26z',
-          fill: 'var(--dsw-alias-bg-base)',
+          key: 'stem',
+          d: 'M32 8.8V6',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 2.1,
+          strokeLinecap: 'round',
         }),
-        h('path', { key: 'play', d: 'M29.5 33.2v10.6l8.8-5.3-8.8-5.3z', fill: 'currentColor' }),
+        h('rect', { key: 'body', x: 4, y: 9, width: 56, height: 47, rx: 10, fill: 'currentColor', opacity: 0.9 }),
+        h('path', { key: 'visor', d: 'M4 19a10 10 0 0 1 10-10h36a10 10 0 0 1 10 10v8H4z', fill: 'currentColor' }),
+        h('circle', { key: 'eye-left', cx: 23.5, cy: 18, r: 4, fill: 'var(--dsw-alias-bg-base)' }),
+        h('circle', { key: 'eye-right', cx: 40.5, cy: 18, r: 4, fill: 'var(--dsw-alias-bg-base)' }),
       ]);
     }
 

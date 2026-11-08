@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Browser automation: a robot peeking over the browser window">
+  <circle cx="32" cy="3.2" r="2.2" fill="#8FBCFF"/>
+  <path d="M32 6.2V8.8" fill="none" stroke="#2F7BF0" stroke-width="2" stroke-linecap="round"/>
+  <rect x="17" y="6" width="30" height="28" rx="9" fill="#F6FAFF"/>
+  <rect x="13.4" y="13" width="3.8" height="9" rx="1.9" fill="#BFD9FF"/>
+  <rect x="46.8" y="13" width="3.8" height="9" rx="1.9" fill="#BFD9FF"/>
+  <circle cx="26.8" cy="16.5" r="3" fill="#12408F"/>
+  <circle cx="37.2" cy="16.5" r="3" fill="#12408F"/>
+  <rect x="4" y="24" width="56" height="36" rx="9" fill="#1F6FEB"/>
+  <path d="M4 33a9 9 0 0 1 9-9h38a9 9 0 0 1 9 9v3H4z" fill="#1550B8"/>
+  <circle cx="11.5" cy="30" r="1.8" fill="#CFE3FF"/>
+  <circle cx="18" cy="30" r="1.8" fill="#CFE3FF" opacity=".7"/>
+  <circle cx="24.5" cy="30" r="1.8" fill="#CFE3FF" opacity=".45"/>
+</svg>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Browser automation: a robot chat bubble inside the browser window">
+  <rect x="4" y="8" width="56" height="48" rx="10" fill="#1F6FEB"/>
+  <path d="M4 18a10 10 0 0 1 10-10h36a10 10 0 0 1 10 10v2H4z" fill="#1550B8"/>
+  <circle cx="11.5" cy="14" r="1.8" fill="#CFE3FF"/>
+  <circle cx="18" cy="14" r="1.8" fill="#CFE3FF" opacity=".7"/>
+  <circle cx="24.5" cy="14" r="1.8" fill="#CFE3FF" opacity=".45"/>
+  <rect x="25" y="25" width="33" height="25" rx="8" fill="#F6FAFF"/>
+  <path d="M31 49l-2.6 6 7.4-5.4z" fill="#F6FAFF"/>
+  <circle cx="36.5" cy="37" r="2.7" fill="#12408F"/>
+  <circle cx="46.5" cy="37" r="2.7" fill="#12408F"/>
+  <rect x="38" y="42.4" width="7" height="2.4" rx="1.2" fill="#9CC0FF"/>
+</svg>

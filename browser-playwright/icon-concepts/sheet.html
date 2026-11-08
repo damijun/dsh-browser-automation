@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Browser automation icon concepts</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    width: 1240px;
+    background: #EEF2F8;
+    color: #14213D;
+    font: 13px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+    padding: 24px 28px 20px;
+  }
+  .head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 16px; }
+  .head h1 { margin: 0; font-size: 21px; letter-spacing: .01em; }
+  .head p { margin: 3px 0 0; color: #5B6B85; font-size: 12.5px; }
+  .badge {
+    border: 1px solid #C7D6EE; background: #fff; color: #2C4A78;
+    border-radius: 999px; padding: 3px 11px; font-size: 11.5px; white-space: nowrap;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card {
+    background: #fff; border: 1px solid #DDE5F1; border-radius: 14px;
+    padding: 13px 15px 12px; display: grid; grid-template-columns: 132px 1fr; gap: 14px;
+    box-shadow: 0 1px 2px rgba(20, 40, 80, .04);
+  }
+  .stage {
+    width: 132px; height: 132px; border-radius: 12px; border: 1px solid #DDE5F1;
+    background: #F7FAFF; display: flex; align-items: center; justify-content: center;
+  }
+  .stage img { width: 96px; height: 96px; display: block; }
+  .meta { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .name { display: flex; align-items: baseline; gap: 8px; }
+  .name b { font-size: 15px; }
+  .key {
+    font-size: 11px; font-weight: 700; color: #fff; background: #1F6FEB;
+    border-radius: 5px; padding: 0 6px; line-height: 18px;
+  }
+  .tag { color: #1F6FEB; font-size: 11.5px; font-weight: 600; }
+  .desc { color: #43536E; font-size: 12px; line-height: 1.65; }
+  .sizes { display: flex; align-items: flex-end; gap: 13px; margin-top: auto; padding-top: 6px; }
+  .sizes figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .sizes figcaption { color: #7A8AA5; font-size: 10px; }
+  .sizes img { display: block; }
+  .s48 { width: 48px; height: 48px; }
+  .s32 { width: 32px; height: 32px; }
+  .s24 { width: 24px; height: 24px; }
+  .s16 { width: 16px; height: 16px; }
+  .darkchip {
+    background: #101726; border-radius: 9px; padding: 5px; display: flex;
+    align-items: center; justify-content: center;
+  }
+  .darkchip img { width: 40px; height: 40px; }
+  .foot { margin-top: 14px; color: #5B6B85; font-size: 11.5px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .foot b { color: #14213D; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div>
+      <h1>侧边栏浏览器自动化 · 图标方案</h1>
+      <p>4 个方向,统一 64×64 网格 / 蓝色系;每个方案按 96 / 48 / 32 / 24 / 16 px 检查小尺寸识别度。</p>
+    </div>
+    <span class="badge">draft 2 · 2026-11-08</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="stage"><img src="a-robot-in-window.svg" alt=""></div>
+      <div class="meta">
+        <div class="name"><span class="key">A</span><b>机器人窗口</b><span class="tag">推荐</span></div>
+        <div class="desc">浏览器窗口里坐着一个机器人脑袋,天线从标题栏探出。最直接:一眼看出「浏览器 + 机器人」,16px 仍能辨认。</div>
+        <div class="sizes">
+          <figure><img class="s48" src="a-robot-in-window.svg" alt=""><figcaption>48</figcaption></figure>
+          <figure><img class="s32" src="a-robot-in-window.svg" alt=""><figcaption>32</figcaption></figure>
+          <figure><img class="s24" src="a-robot-in-window.svg" alt=""><figcaption>24</figcaption></figure>
+          <figure><img class="s16" src="a-robot-in-window.svg" alt=""><figcaption>16</figcaption></figure>
+          <figure class="darkchip"><img src="a-robot-in-window.svg" alt=""></figure>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="stage"><img src="b-peeking-bot.svg" alt=""></div>
+      <div class="meta">
+        <div class="name"><span class="key">B</span><b>窗口探头</b></div>
+        <div class="desc">机器人从窗口上沿探出头,浏览器成了它的操作台。比 A 更有性格、更「拟人」,但小尺寸时头部占比偏大。</div>
+        <div class="sizes">
+          <figure><img class="s48" src="b-peeking-bot.svg" alt=""><figcaption>48</figcaption></figure>
+          <figure><img class="s32" src="b-peeking-bot.svg" alt=""><figcaption>32</figcaption></figure>
+          <figure><img class="s24" src="b-peeking-bot.svg" alt=""><figcaption>24</figcaption></figure>
+          <figure><img class="s16" src="b-peeking-bot.svg" alt=""><figcaption>16</figcaption></figure>
+          <figure class="darkchip"><img src="b-peeking-bot.svg" alt=""></figure>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="stage"><img src="c-visor-window.svg" alt=""></div>
+      <div class="meta">
+        <div class="name"><span class="key">C</span><b>窗口即机器人</b></div>
+        <div class="desc">标题栏变成机器人的面罩(青色双眼 + 天线),页面里一个光标正在点击。最简洁,几何感强,小尺寸靠两条亮眼撑住。</div>
+        <div class="sizes">
+          <figure><img class="s48" src="c-visor-window.svg" alt=""><figcaption>48</figcaption></figure>
+          <figure><img class="s32" src="c-visor-window.svg" alt=""><figcaption>32</figcaption></figure>
+          <figure><img class="s24" src="c-visor-window.svg" alt=""><figcaption>24</figcaption></figure>
+          <figure><img class="s16" src="c-visor-window.svg" alt=""><figcaption>16</figcaption></figure>
+          <figure class="darkchip"><img src="c-visor-window.svg" alt=""></figure>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="stage"><img src="d-robot-bubble.svg" alt=""></div>
+      <div class="meta">
+        <div class="name"><span class="key">D</span><b>机器人气泡</b></div>
+        <div class="desc">浏览器窗口 + 机器人对话气泡,保留现有图标「窗口 + 气泡」的骨架,只把播放三角换成机器人脸。改动最小、最保守。</div>
+        <div class="sizes">
+          <figure><img class="s48" src="d-robot-bubble.svg" alt=""><figcaption>48</figcaption></figure>
+          <figure><img class="s32" src="d-robot-bubble.svg" alt=""><figcaption>32</figcaption></figure>
+          <figure><img class="s24" src="d-robot-bubble.svg" alt=""><figcaption>24</figcaption></figure>
+          <figure><img class="s16" src="d-robot-bubble.svg" alt=""><figcaption>16</figcaption></figure>
+          <figure class="darkchip"><img src="d-robot-bubble.svg" alt=""></figure>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span><b>现有图标:</b>蓝色窗口 + 白色对话气泡里的播放三角</span>
+    <span><b>替换范围:</b>插件封面 icon.svg + 侧栏 start page 的 16px 单色字形</span>
+    <span><b>选定后:</b>同步重绘单色版,并替换 icon.svg / client.js</span>
+  </div>
+</body>
+</html>

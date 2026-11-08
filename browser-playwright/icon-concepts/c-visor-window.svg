@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Browser automation: the browser title bar is the robot visor, with a click cursor">
+  <circle cx="32" cy="3.8" r="2.3" fill="#7FE3FF"/>
+  <path d="M32 8.8V6" fill="none" stroke="#2F7BF0" stroke-width="2.1" stroke-linecap="round"/>
+  <rect x="4" y="9" width="56" height="47" rx="10" fill="#1F6FEB"/>
+  <path d="M4 19a10 10 0 0 1 10-10h36a10 10 0 0 1 10 10v8H4z" fill="#0E2F63"/>
+  <circle cx="23.5" cy="18" r="6.4" fill="#7FE3FF" opacity=".16"/>
+  <circle cx="40.5" cy="18" r="6.4" fill="#7FE3FF" opacity=".16"/>
+  <circle cx="23.5" cy="18" r="3.5" fill="#7FE3FF"/>
+  <circle cx="40.5" cy="18" r="3.5" fill="#7FE3FF"/>
+  <rect x="11" y="34" width="14" height="3" rx="1.5" fill="#5C9BFF" opacity=".6"/>
+  <rect x="11" y="40" width="9" height="3" rx="1.5" fill="#5C9BFF" opacity=".4"/>
+  <circle cx="39" cy="41.5" r="8.5" fill="none" stroke="#7FE3FF" stroke-width="1.5" opacity=".4"/>
+  <circle cx="39" cy="41.5" r="4.6" fill="none" stroke="#7FE3FF" stroke-width="1.5" opacity=".7"/>
+  <path d="M39 41.5v10.8l2.9-2.6 1.7 4.1 2-.9-1.7-4.1h3.6z" fill="#F6FAFF" stroke="#0E2F63" stroke-width="1" stroke-linejoin="round"/>
+</svg>
