@@ -181,6 +181,42 @@ test('every renderer returns non-empty text blocks', () => {
   }
 });
 
+test('browser_list renders a JSON page list with pageId, title and url', () => {
+  const tool = createTools(stubRuntime).find((entry) => entry.name === 'browser_list');
+  const [block] = tool.output.render({}, {
+    count: 1,
+    pages: [
+      {
+        index: 1,
+        current: true,
+        title: 'Page',
+        url: 'https://a.test/',
+        pageId: 'dshpg-aaaaaa-11111111',
+        session: 's1',
+        mine: true,
+        source: 'open',
+      },
+    ],
+    warning: 'read me',
+  });
+  assert.deepEqual(JSON.parse(block.text), {
+    count: 1,
+    pages: [{ pageId: 'dshpg-aaaaaa-11111111', title: 'Page', url: 'https://a.test/' }],
+    warning: 'read me',
+  });
+  // `warning` is optional: it must be absent, not `"undefined"`, when there is none.
+  const [clean] = tool.output.render({}, { count: 0, pages: [] });
+  assert.deepEqual(JSON.parse(clean.text), { count: 0, pages: [] });
+});
+
+test('browser_run_code states the body-only and no-JSON.stringify rules', () => {
+  const tool = createTools(stubRuntime).find((entry) => entry.name === 'browser_run_code');
+  const code = tool.parameters.properties.code.description;
+  assert.match(code, /Function body only/);
+  assert.match(code, /async page =>/);
+  assert.match(code, /JSON\.stringify/);
+});
+
 /** Build a value that satisfies the required properties of an output schema. */
 function sampleValueFor(schema) {
   const value = {};

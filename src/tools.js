@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 
+import { formatRunCodeOutput, wrapRunCodeBody } from './run-code.js';
+
 /**
  * Tool definitions for the DSH sidebar-browser automation plugin.
  *
@@ -208,21 +210,18 @@ export function createTools(runtime) {
           },
           required: ['count', 'pages'],
         },
-        // No tab index in the rendered line: the model addresses pages by pageId, and
-        // the index is the one piece of a row it could never pass back to a tool.
+        // No tab index in the rendered output: the model addresses pages by pageId, and
+        // the index is the one piece of a row it could never pass back to a tool. JSON
+        // keeps the list scanable while leaving the pageId/title/url triple explicit.
         render: renderWith((value) => {
-          const body =
-            value.pages.length === 0
-              ? 'No pages in this session. Use browser_open or browser_claim.'
-              : value.pages
-                  .map(
-                    (page) =>
-                      `${page.pageId ?? '(unmarked)'} — ${page.title ?? ''} — ${page.url}`,
-                  )
-                  .join('\n');
-          // The warning is the whole point when the sidebar looks non-empty and this
-          // list does not: it must reach the model, not just the JSON.
-          return value.warning ? `${body}\n\nWarning: ${value.warning}` : body;
+          const pages = value.pages.map((page) => ({
+            pageId: page.pageId ?? null,
+            title: page.title ?? '',
+            url: page.url ?? '',
+          }));
+          const body = { count: value.count, pages };
+          if (value.warning !== undefined) body.warning = value.warning;
+          return JSON.stringify(body, null, 2);
         }),
       },
       async execute(args, exec) {
@@ -508,8 +507,9 @@ export function createTools(runtime) {
             'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
           ),
           code: string(
-            'Playwright function body invoked with `page` in scope. Return a string for the output, e.g. ' +
-              '"return await page.title()".',
+            'Function body only — never the `async page => { … }` wrapper (the tool adds it). `page` is in scope. ' +
+              '`return` the value to show, e.g. `return await page.title()`; return objects/arrays directly, never ' +
+              '`JSON.stringify(...)` (playwright-cli serializes the value once already, so it would be encoded twice).',
           ),
         },
         required: ['pageId', 'code'],
@@ -520,7 +520,7 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            output: string('playwright-cli output.'),
+            output: string('Return value: strings as plain text, objects/arrays as indented JSON.'),
           },
           required: ['pageId', 'output'],
         },
@@ -528,7 +528,13 @@ export function createTools(runtime) {
       },
       async execute(args, exec) {
         const sessionId = requireSession(exec);
-        return sanitize(await runtime.runCode({ pageId: args.pageId, code: args.code, sessionId, signal: exec.signal }));
+        const value = await runtime.runCode({
+          pageId: args.pageId,
+          code: wrapRunCodeBody(args.code),
+          sessionId,
+          signal: exec.signal,
+        });
+        return sanitize({ ...value, output: formatRunCodeOutput(value.output) });
       },
     },
 

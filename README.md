@@ -95,14 +95,14 @@ playwright-cli --version
 |---|---|
 | `browser_open {url}` | 通过 DSH UI **新建**侧边栏标签页 → 安装页面身份 → 返回 `pageId`。只在真的需要多一个 tab 时用（见下方"少开 tab"）。桥不可用即报错，**不会**复用现有标签页。**后台会话**走内部的 `openTabIn`，结果带 `background: true`（不聚焦、不可截图），见 §7.3 |
 | `browser_claim` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回该页自己的标题；从页面目录读出旧身份并换成新 `pageId`。无参数 |
-| `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页）。同一 DSH 会话内 `pageId` 稳定：优先复用上下文里的 `pageId`，只在没有可用 `pageId` 时才列 |
+| `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页）。同一 DSH 会话内 `pageId` 稳定：优先复用上下文里的 `pageId`，只在没有可用 `pageId` 时才列。结果按 JSON 渲染：`count` / `pages[]`（每页只保留 `pageId`/`title`/`url`）/ 可选 `warning` |
 | `browser_navigate {pageId, type?, url?}` | 导航：`type` 默认 `url`（此时必须给 `url`）/ `reload` / `back` / `forward`。不新增 tab、`pageId` 不变；**先把 tab 切到前台**；`reload` 实现为 goto 当前 URL（**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面）；`back`/`forward` 走页面自己的历史栈 |
 | `browser_snapshot {pageId, depth?}` | 可访问性快照（含 `[ref=…]`），内容原样返回，不做二次压缩 |
 | `browser_screenshot {pageId, fullPage?, target?}` | 截图存盘，返回绝对路径（不内联字节） |
 | `browser_click {pageId, ref, button?, double?, modifiers?}` | 点击 |
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
-| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次身份（snippet 可能导航或替换文档），并把新 `title/url` 回写登记表。**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。**不要在 snippet 里 `page.reload()` / `location.reload()`**（会刷新 DSH 外壳）；导航优先用 `browser_navigate`，但 `page.goto()` / `goBack()` / `goForward()` 不禁止 |
+| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次身份（snippet 可能导航或替换文档），并把新 `title/url` 回写登记表。`code` **只传函数体**（不要带 `async page => { … }`，工具会自动包）；**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。返回值直接 `return`（对象/数组即可，工具会美化），**禁止 `JSON.stringify`**：CLI 已经序列化一次，再包一层会变成转义字符串。**不要在 snippet 里 `page.reload()` / `location.reload()`**（会刷新 DSH 外壳）；导航优先用 `browser_navigate`，但 `page.goto()` / `goBack()` / `goForward()` 不禁止 |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
 | `browser_status {action}` | `status` / `attach` / `detach`；连接出问题先看它。状态面板由用户自己从侧栏打开，工具不代开 |
 
@@ -201,14 +201,15 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 
 - 读值：`return await page.evaluate(() => document.title)`
 - 读元素：`return await page.locator('a').allTextContents()`
-- 要结构化返回就自己 `JSON.stringify`（返回的是字符串，原样回传）
+- 要结构化返回就**直接 `return` 对象/数组**（CLI 序列化一次，工具再把对象/数组缩进、把字符串去掉引号）；
+  **不要 `JSON.stringify`** —— 那会被编码两次，输出满是反斜杠
 
 代价：`run_code` 每次多一次 CLI 调用（跑完补身份），只读操作也一样。
 
 ### 工具结果里没有 tab index
 
 模型只按 `pageId` 寻址，所以**普通工具的结果里不含 tab index**（`browser_open`/`claim` 的提示文案里也没有，
-`browser_list` 的行首也不再带 `[index]`），index 属于 driver 层内部细节。目前只有诊断工具
+`browser_list` 的 JSON 里也不再出现 `index`），index 属于 driver 层内部细节。目前只有诊断工具
 `browser_status` 还保留 `currentIndex` 与 `pages[].index`：它是给**人**对照 `playwright-cli tab-list` 用的，
 调用频率低。如果以后要彻底去掉，用行内的 `current: true` 替代即可。
 
@@ -561,7 +562,7 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
   需要重新 `browser_open` / `browser_claim`。
 - **页面改自己的标题不再影响身份**：身份在 `window.__dshBrowserAutomation.pageId` 上，标题、SPA 路由、
   未读角标都碰不到它。只有页面主动删掉这个字段才会失去身份（常规网页不会这么做）；真丢了就重新 claim。
-- `browser_run_code` 的 `code` 是**函数体源码**（`async page => { … }`），不是表达式；读值用 `return await page.evaluate(...)`，返回值原样当文本回传。
+- `browser_run_code` 的 `code` 是**纯函数体**（不要带 `async page => { … }`，工具自动包一层）；读值用 `return await page.evaluate(...)`。返回值直接 `return`：字符串按原文显示，对象/数组按缩进 JSON 显示；**不要 `JSON.stringify`**（会被 CLI 再序列化一次）。
 - **插件不额外限制 scheme**（只拒 `dsh-app:`），但**平台是有约束的**：DSH 侧边栏浏览器自己的地址解析器只接受 `http`/`https`（含 loopback），
   拒绝 `file:`/`data:`/`blob:`、内嵌凭据和应用同源地址，本地文件归**文档预览**（依据 `dsh-client-ui-sidebar-browser` README 的 Protocol policy）。
   要测本地页面：在该目录起一个 loopback 服务（`python -m http.server 8000`）再打开 `http://127.0.0.1:8000/<file>` —— `browser_open` 失败时会把这句提示带上。

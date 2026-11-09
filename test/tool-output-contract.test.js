@@ -104,7 +104,7 @@ test('every wrapping page tool answers with a value its own schema accepts', asy
   });
 
   const cases = [
-    ['browser_run_code', { code: 'async page => 1' }, 'runCode'],
+    ['browser_run_code', { code: 'return 1' }, 'runCode'],
     ['browser_console', {}, 'console'],
     ['browser_press', { key: 'Tab' } , 'press'],
   ];
@@ -118,5 +118,43 @@ test('every wrapping page tool answers with a value its own schema accepts', asy
     assertMatchesSchema(value, tool.output.schema, name);
     assert.equal(value.pageId, PAGE_ID, `${name}: pageId must survive`);
   }
+});
+
+test('browser_run_code wraps the body and validates before touching the page', async () => {
+  const seen = [];
+  const runtime = runtimeWith({
+    runCode: async (tab, options) => {
+      seen.push(options.code);
+      return { output: '"hi"', title: 'T', url: 'https://a.test/' };
+    },
+  });
+  const tool = toolNamed('browser_run_code', runtime);
+
+  const value = await tool.execute(
+    { pageId: PAGE_ID, code: 'return await page.title()' },
+    { agent: { id: 's1' } },
+  );
+  // The body is wrapped for playwright-cli; the string result loses its JSON quotes.
+  assert.deepEqual(seen, ['async page => {\nreturn await page.title()\n}']);
+  assert.equal(value.output, 'hi');
+
+  await assert.rejects(
+    () => tool.execute({ pageId: PAGE_ID, code: 'async page => { return 1; }' }, { agent: { id: 's1' } }),
+    /function body only/,
+  );
+  await assert.rejects(
+    () => tool.execute({ pageId: PAGE_ID, code: 'return JSON.stringify(rows)' }, { agent: { id: 's1' } }),
+    /not a JSON string/,
+  );
+  assert.equal(seen.length, 1, 'rejected code must never reach playwright-cli');
+});
+
+test('browser_run_code renders an object result as indented JSON', async () => {
+  const runtime = runtimeWith({
+    runCode: async () => ({ output: '{"a":1}', title: 'T', url: 'https://a.test/' }),
+  });
+  const tool = toolNamed('browser_run_code', runtime);
+  const value = await tool.execute({ pageId: PAGE_ID, code: 'return { a: 1 }' }, { agent: { id: 's1' } });
+  assert.equal(value.output, '{\n  "a": 1\n}');
 });
 
