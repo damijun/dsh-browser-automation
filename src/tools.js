@@ -520,7 +520,7 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            output: string('Return value: strings as plain text, objects/arrays as indented JSON.'),
+            output: string('Return value: strings as plain text, objects/arrays as compact JSON.'),
           },
           required: ['pageId', 'output'],
         },

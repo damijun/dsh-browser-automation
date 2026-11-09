@@ -156,9 +156,10 @@ export function wrapRunCodeBody(code) {
  * Turn playwright-cli's output into the text the model reads.
  *
  * `run-code` prints the return value as JSON exactly once. Decoding that one
- * layer makes a returned string plain text and a returned object indented JSON;
- * it is deliberately **not** decoded a second time, so a body that still returns
- * JSON text is shown as that text rather than being guessed at.
+ * layer only unquotes a returned string; an object or array keeps the compact
+ * JSON the CLI printed, because indenting it would cost context without adding
+ * data. It is deliberately **not** decoded a second time, so a body that still
+ * returns JSON text is shown as that text rather than being guessed at.
  *
  * @param {unknown} raw playwright-cli stdout
  * @returns {string}
@@ -173,6 +174,5 @@ export function formatRunCodeOutput(raw) {
     return output;
   }
   if (typeof value === 'string') return value;
-  if (value !== null && typeof value === 'object') return JSON.stringify(value, null, 2);
   return output;
 }

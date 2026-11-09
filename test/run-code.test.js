@@ -99,9 +99,13 @@ test('decodes the CLI serialization once', () => {
   assert.equal(formatRunCodeOutput('not json'), 'not json');
 });
 
-test('object and array results are indented', () => {
-  assert.equal(formatRunCodeOutput('{"a":1}'), '{\n  "a": 1\n}');
-  assert.equal(formatRunCodeOutput('[1,2]'), '[\n  1,\n  2\n]');
+test('only strings are decoded; objects and arrays keep the compact CLI JSON', () => {
+  assert.equal(formatRunCodeOutput('{"a":1}'), '{"a":1}');
+  assert.equal(formatRunCodeOutput('[1,2]'), '[1,2]');
+  assert.equal(
+    formatRunCodeOutput('{"title":"Example Domain","url":"https://example.com/","links":1}'),
+    '{"title":"Example Domain","url":"https://example.com/","links":1}',
+  );
 });
 
 test('a JSON string is not decoded a second time', () => {

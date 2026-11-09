@@ -149,12 +149,12 @@ test('browser_run_code wraps the body and validates before touching the page', a
   assert.equal(seen.length, 1, 'rejected code must never reach playwright-cli');
 });
 
-test('browser_run_code renders an object result as indented JSON', async () => {
+test('browser_run_code keeps an object result as compact JSON', async () => {
   const runtime = runtimeWith({
     runCode: async () => ({ output: '{"a":1}', title: 'T', url: 'https://a.test/' }),
   });
   const tool = toolNamed('browser_run_code', runtime);
   const value = await tool.execute({ pageId: PAGE_ID, code: 'return { a: 1 }' }, { agent: { id: 's1' } });
-  assert.equal(value.output, '{\n  "a": 1\n}');
+  assert.equal(value.output, '{"a":1}');
 });
 

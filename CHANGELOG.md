@@ -9,8 +9,8 @@
   anything runs.
 - `browser_run_code` rejects a return that uses `JSON.stringify(...)` before the
   snippet runs. playwright-cli already serializes the return value once, so a JSON
-  string would be encoded twice. Returned strings now render as plain text, and
-  returned objects/arrays as indented JSON.
+  string would be encoded twice. Returned strings render as plain text; returned
+  objects/arrays keep the compact JSON playwright-cli printed.
 - `browser_list` renders a JSON object (`count`, `pages[]` with `pageId`/`title`/`url`,
   optional `warning`) instead of one text line per page.
 

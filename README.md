@@ -102,7 +102,7 @@ playwright-cli --version
 | `browser_click {pageId, ref, button?, double?, modifiers?}` | 点击 |
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
 | `browser_press {pageId, key}` | 单键（Enter / Tab / Escape …） |
-| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次身份（snippet 可能导航或替换文档），并把新 `title/url` 回写登记表。`code` **只传函数体**（不要带 `async page => { … }`，工具会自动包）；**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。返回值直接 `return`（对象/数组即可，工具会美化），**禁止 `JSON.stringify`**：CLI 已经序列化一次，再包一层会变成转义字符串。**不要在 snippet 里 `page.reload()` / `location.reload()`**（会刷新 DSH 外壳）；导航优先用 `browser_navigate`，但 `page.goto()` / `goBack()` / `goForward()` 不禁止 |
+| `browser_run_code {pageId, code}` | `playwright-cli run-code`；跑完会补一次身份（snippet 可能导航或替换文档），并把新 `title/url` 回写登记表。`code` **只传函数体**（不要带 `async page => { … }`，工具会自动包）；**读值也走这里**：`return await page.evaluate(() => document.title)` / `return await page.locator('a').allTextContents()`。返回值直接 `return`（对象/数组按紧凑 JSON 返回；字符串去掉外层引号），**禁止 `JSON.stringify`**：CLI 已经序列化一次，再包一层会变成转义字符串。**不要在 snippet 里 `page.reload()` / `location.reload()`**（会刷新 DSH 外壳）；导航优先用 `browser_navigate`，但 `page.goto()` / `goBack()` / `goForward()` 不禁止 |
 | `browser_console {pageId, level?, limit?}` | 控制台日志，默认最后 50 行 |
 | `browser_status {action}` | `status` / `attach` / `detach`；连接出问题先看它。状态面板由用户自己从侧栏打开，工具不代开 |
 
@@ -201,7 +201,7 @@ re-attach 后会回到应用页，也不跟随侧边栏切换。所以 claim 会
 
 - 读值：`return await page.evaluate(() => document.title)`
 - 读元素：`return await page.locator('a').allTextContents()`
-- 要结构化返回就**直接 `return` 对象/数组**（CLI 序列化一次，工具再把对象/数组缩进、把字符串去掉引号）；
+- 要结构化返回就**直接 `return` 对象/数组**（CLI 序列化一次，工具只把字符串去掉外层引号；对象/数组保持紧凑 JSON）；
   **不要 `JSON.stringify`** —— 那会被编码两次，输出满是反斜杠
 
 代价：`run_code` 每次多一次 CLI 调用（跑完补身份），只读操作也一样。
@@ -562,7 +562,7 @@ Host 进程是 Electron，`process.execPath` 是 `DeepSeek Harness.exe` 而不�
   需要重新 `browser_open` / `browser_claim`。
 - **页面改自己的标题不再影响身份**：身份在 `window.__dshBrowserAutomation.pageId` 上，标题、SPA 路由、
   未读角标都碰不到它。只有页面主动删掉这个字段才会失去身份（常规网页不会这么做）；真丢了就重新 claim。
-- `browser_run_code` 的 `code` 是**纯函数体**（不要带 `async page => { … }`，工具自动包一层）；读值用 `return await page.evaluate(...)`。返回值直接 `return`：字符串按原文显示，对象/数组按缩进 JSON 显示；**不要 `JSON.stringify`**（会被 CLI 再序列化一次）。
+- `browser_run_code` 的 `code` 是**纯函数体**（不要带 `async page => { … }`，工具自动包一层）；读值用 `return await page.evaluate(...)`。返回值直接 `return`：字符串按原文显示，对象/数组按紧凑 JSON 显示；**不要 `JSON.stringify`**（会被 CLI 再序列化一次）。
 - **插件不额外限制 scheme**（只拒 `dsh-app:`），但**平台是有约束的**：DSH 侧边栏浏览器自己的地址解析器只接受 `http`/`https`（含 loopback），
   拒绝 `file:`/`data:`/`blob:`、内嵌凭据和应用同源地址，本地文件归**文档预览**（依据 `dsh-client-ui-sidebar-browser` README 的 Protocol policy）。
   要测本地页面：在该目录起一个 loopback 服务（`python -m http.server 8000`）再打开 `http://127.0.0.1:8000/<file>` —— `browser_open` 失败时会把这句提示带上。
