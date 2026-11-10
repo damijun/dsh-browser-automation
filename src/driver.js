@@ -4,6 +4,7 @@ import { CliError } from './cli.js';
 import { parseTabList, currentIndex, describeTabs } from './tab-list.js';
 import { pageMarkerExpression, probeMarkerExpression, installMarkerCode } from './page-id.js';
 import { PAGE_CATALOG_CODE, parsePageCatalog, describeCatalog } from './page-catalog.js';
+import { resolveSnapshotMaxChars, saveSnapshotFile, snapshotDirectory, truncateByLines } from './snapshot.js';
 
 /**
  * Parse the JSON value playwright-cli prints for `eval --raw`.
@@ -93,6 +94,9 @@ export class PageDriver {
     // most environment-sensitive operation this plugin performs.
     this.attachTimeoutMs = Number(options.attachTimeoutMs ?? 60_000);
     this.screenshotTimeoutMs = Number(options.screenshotTimeoutMs ?? 25_000);
+    // Where an over-budget snapshot is written in full. A directory option lets the
+    // tests use their own scratch space instead of polluting the real temp dir.
+    this.snapshotDir = options.snapshotDir ? String(options.snapshotDir) : snapshotDirectory();
     this.log = options.log ?? (() => {});
     this.attached = false;
     // The daemon has one global "current tab"; every select+command pair must be
@@ -416,17 +420,36 @@ export class PageDriver {
   }
 
   /**
+   * Read the accessibility snapshot of a tab, keeping the returned text bounded.
+   *
+   * playwright-cli is always asked for the complete snapshot (there is no depth or
+   * filtering option any more: the right depth differs per page). When the text fits
+   * in `maxChars` it is returned untouched. When it does not, the complete text is
+   * written to a file first — a failed write throws instead of pretending the
+   * truncated answer is all there is — and the returned `snapshot` is the longest
+   * whole-line prefix that fits.
+   *
    * @param {ResolvedTab} tab
-   * @param {{ depth?: number }} [options]
+   * @param {{ maxChars?: number }} [options]
+   * @returns {Promise<{ snapshot: string, truncated: boolean, maxChars: number, totalChars: number, snapshotPath?: string }>}
    */
   async snapshot(tab, options = {}) {
+    const maxChars = resolveSnapshotMaxChars(options.maxChars);
     return this.executeOnResolvedTab(tab, async () => {
-      const args = ['--raw', 'snapshot'];
-      if (options.depth) args.push(`--depth=${options.depth}`);
-      const { stdout } = await this.cli.run(args);
+      const { stdout } = await this.cli.run(['--raw', 'snapshot']);
       const text = stdout.trim();
-      const refs = [...text.matchAll(/\[ref=([^\]]+)\]/g)].map((match) => match[1]);
-      return { snapshot: text, refCount: refs.length };
+      const totalChars = text.length;
+      if (totalChars <= maxChars) {
+        return { snapshot: text, truncated: false, maxChars, totalChars };
+      }
+      const snapshotPath = await saveSnapshotFile(text, { dir: this.snapshotDir });
+      return {
+        snapshot: truncateByLines(text, maxChars),
+        truncated: true,
+        maxChars,
+        totalChars,
+        snapshotPath,
+      };
     });
   }
 

@@ -743,6 +743,7 @@ window.__ModuleLoader__.load({
       { key: 'requestTimeoutMs', kind: 'number' },
       { key: 'screenshotTimeoutMs', kind: 'number' },
       { key: 'screenshotSettleMs', kind: 'number' },
+      { key: 'snapshotMaxChars', kind: 'number' },
       { key: 'autoAttach', kind: 'boolean' },
       { key: 'showSharedBadge', kind: 'boolean' },
       { key: 'disabledTools', kind: 'text' },

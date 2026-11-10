@@ -28,7 +28,7 @@ function runtimeWith() {
     resolvePage: async () => ({ index: 1, current: true, title: 'T', url: 'https://a.test/', pageId: 'x' }),
     snapshot: async () => {
       calls.push('snapshot');
-      return { snapshot: '- tree', refCount: 0 };
+      return { snapshot: '- tree', truncated: false, maxChars: 5_000, totalChars: 6 };
     },
   };
   return { runtime, calls };

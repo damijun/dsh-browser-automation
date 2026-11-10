@@ -43,6 +43,32 @@ const renderWith =
 const text = (value) => (typeof value === 'string' ? value : JSON.stringify(value, null, 2));
 
 /**
+ * Render a `browser_snapshot` result.
+ *
+ * The layout is fixed by the snapshot size-control design: pageId first, then the
+ * raw snapshot when it fits; otherwise the over-limit banner, the absolute path of
+ * the complete text, and the whole-line prefix that is actually shown. No title and
+ * no URL are included — the model only needs the page content here.
+ *
+ * @param {{ pageId: string, snapshot: string, truncated: boolean, maxChars: number, snapshotPath?: string }} value
+ */
+function renderSnapshot(value) {
+  const lines = [`pageId: ${value.pageId}`];
+  if (value.truncated === true) {
+    lines.push(
+      'Snapshot exceeds the maximum output size.',
+      'Full snapshot saved to:',
+      String(value.snapshotPath ?? ''),
+      `Showing the first ${value.maxChars} characters by complete lines:`,
+    );
+  }
+  const snapshot = value.snapshot ?? '';
+  lines.push('Snapshot:');
+  if (snapshot !== '') lines.push(snapshot);
+  return lines.join('\n');
+}
+
+/**
  * Every tool this plugin can register, in the order {@link createTools} emits them.
  *
  * Kept as data so the `disabledTools` config can be validated without building the
@@ -235,7 +261,9 @@ export function createTools(runtime) {
       description:
         'Get an accessibility snapshot of the page, with [ref=…] handles for click and fill. ' +
         'Refs are valid only for this snapshot; take a new one after the page changes. ' +
-        'Use this rather than a screenshot to read content.',
+        'Use this rather than a screenshot to read content. Output is capped at snapshotMaxChars ' +
+        'characters: when the snapshot is longer, the complete text is saved to a file and only the ' +
+        'leading whole lines are shown.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -243,7 +271,6 @@ export function createTools(runtime) {
           pageId: string(
             'Page ID from the conversation context or a previous browser tool output; it stays valid for the session.',
           ),
-          depth: integer('Optional maximum tree depth. Omit for the whole page.'),
         },
         required: ['pageId'],
       },
@@ -253,21 +280,27 @@ export function createTools(runtime) {
           additionalProperties: false,
           properties: {
             pageId: string(),
-            title: string(),
-            url: string(),
-            refCount: integer(),
-            snapshot: string('The snapshot text, exactly as playwright-cli produced it.'),
+            snapshot: string(
+              'The snapshot text: complete when it fits the limit, otherwise the leading whole lines that fit.',
+            ),
+            truncated: boolean(
+              'True when the snapshot exceeded the limit, so only a prefix is shown and the complete text is in snapshotPath.',
+            ),
+            maxChars: integer('The snapshot character limit used for this call (config snapshotMaxChars).'),
+            totalChars: integer('Length of the complete snapshot in characters.'),
+            snapshotPath: string(
+              'Absolute path of the file holding the complete snapshot. Present only when truncated is true.',
+            ),
           },
-          required: ['pageId', 'refCount', 'snapshot'],
+          required: ['pageId', 'snapshot', 'truncated', 'maxChars', 'totalChars'],
         },
-        render: renderWith((value) => value.snapshot),
+        render: renderWith(renderSnapshot),
       },
       async execute(args, exec) {
         const sessionId = requireSession(exec);
         return sanitize(
           await runtime.snapshot({
             pageId: args.pageId,
-            depth: args.depth,
             sessionId,
             signal: exec.signal,
           }),

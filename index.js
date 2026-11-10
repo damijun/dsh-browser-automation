@@ -102,6 +102,7 @@ export function apply(ctx, config) {
     attachTimeoutMs: read(source.attachTimeoutMs, 60_000),
     screenshotTimeoutMs: read(source.screenshotTimeoutMs, 25_000),
     screenshotSettleMs: read(source.screenshotSettleMs, 1_200),
+    snapshotMaxChars: read(source.snapshotMaxChars, 5_000),
     debug: read(source.debug, false) === true,
     disabledTools: read(source.disabledTools, ''),
   };
@@ -117,6 +118,7 @@ export function apply(ctx, config) {
     attachTimeoutMs: settings.attachTimeoutMs,
     screenshotTimeoutMs: settings.screenshotTimeoutMs,
     screenshotSettleMs: settings.screenshotSettleMs,
+    snapshotMaxChars: settings.snapshotMaxChars,
     debug: settings.debug,
     disabledTools: settings.disabledTools,
   };

@@ -38,6 +38,10 @@
         # for a screenshot, milliseconds.
         screenshotTimeoutMs: 25000
         screenshotSettleMs: 1200
+        # Maximum snapshot characters shown to the model. A longer snapshot is written
+        # in full to %TEMP%\dsh-browser-automation\ and only its leading whole lines
+        # are shown.
+        snapshotMaxChars: 5000
         # Set true to print bridge/CLI diagnostics with console.debug.
         debug: false
 

@@ -97,7 +97,7 @@ playwright-cli --version
 | `browser_claim` | 接管用户眼前那一页（侧边栏可见的浏览器页），返回该页自己的标题；从页面目录读出旧身份并换成新 `pageId`。无参数 |
 | `browser_list {scope}` | `session`（默认，本会话控制的页）/ `all`（含其他会话与未标记页）。同一 DSH 会话内 `pageId` 稳定：优先复用上下文里的 `pageId`，只在没有可用 `pageId` 时才列。结果按 JSON 渲染：`count` / `pages[]`（每页只保留 `pageId`/`title`/`url`）/ 可选 `warning` |
 | `browser_navigate {pageId, type?, url?}` | 导航：`type` 默认 `url`（此时必须给 `url`）/ `reload` / `back` / `forward`。不新增 tab、`pageId` 不变；**先把 tab 切到前台**；`reload` 实现为 goto 当前 URL（**绝不用 `playwright-cli reload`**：实测它会刷新整个 DSH 页面）；`back`/`forward` 走页面自己的历史栈 |
-| `browser_snapshot {pageId, depth?}` | 可访问性快照（含 `[ref=…]`），内容原样返回，不做二次压缩 |
+| `browser_snapshot {pageId}` | 可访问性快照（含 `[ref=…]`）。不超限（`snapshotMaxChars`，默认 5000 字符）时原样返回；超限时完整原文写入 `%TEMP%\dsh-browser-automation\snapshot-….txt`，工具只展示按**完整行**截断的前缀，并返回该文件的绝对路径。不再有 `depth` 参数 |
 | `browser_screenshot {pageId, fullPage?, target?}` | 截图存盘，返回绝对路径（不内联字节） |
 | `browser_click {pageId, ref, button?, double?, modifiers?}` | 点击 |
 | `browser_fill {pageId, ref, text, submit?}` | 覆盖式填充 |
@@ -441,8 +441,19 @@ Host → Client 调用通道（`@deepseek-ai/dsh-api-remotes` 的转发事件是
     attachTimeoutMs: 60000       # CLI 附着的最长等待（Windows 上偶发卡住，超时重试一次）
     screenshotTimeoutMs: 25000   # 单次截图抓取的截止时间
     screenshotSettleMs: 1200     # 截图前把隐藏页切到前台后，等首帧的时间
+    snapshotMaxChars: 5000       # 快照进入上下文的字符上限；超限时完整原文存文件
     debug: false                 # true 时用 console.debug 打印桥与 CLI 诊断
 ```
+
+**`snapshotMaxChars`（默认 5000）**：`browser_snapshot` 展示内容的上限，只对快照正文计数，提示文本不占预算。
+
+- 不超过上限：工具输出 `pageId` + `Snapshot:` + 原文，不生成文件；
+- 超过上限：先按完整行截断，展示能完整放下的前若干行，同时把**完整原文**写入
+  `%TEMP%\dsh-browser-automation\snapshot-<时间戳>-<随机>.txt`（UTF-8，目录按需创建），输出里给出绝对路径；
+- 第一行本身就超过上限时，展示部分为空，但超限提示与文件路径仍然输出；
+- 不做语义摘要、不筛选交互元素、不保证层级完整（截断后靠后的 `ref` 不保证还能操作）；
+- 非法值（0、负数、`NaN`、`Infinity`、非数字）在读取时回落到 5000；设置卡片写入 0 会被拒绝；
+- 该目录目前**没有清理策略**（见 `src/snapshot.js` 里的 TODO），长期使用请自行清理临时目录。
 
 > ⚠️ **没有端口设置项，这是故意的。**
 >
@@ -640,7 +651,7 @@ cd dsh-browser-automation
 node --test
 ```
 
-181 个用例，覆盖：
+204 个用例，覆盖：
 
 - `tab-list` 解析（真实三标签样本、含 `[]()` 的标题、含 `)` 的 URL、CRLF、`current`/字段集）；
 - 页面身份脚本（写入 `window`、标题保持不变、幂等、初始化脚本嵌入）——用 `node:vm` + 假页面真跑；
@@ -650,6 +661,9 @@ node --test
   各种情况下的行为；claim 从页面目录读出旧身份后必须注销旧 pageId；
 - **截图的两条路径**：可见页走 CLI 命令、隐藏页走"补 tabId→focus→长超时"；`fullPage` 透传；
   `target`（元素截图）必须留在 CLI 路径上；拿不到 tabId 时老实走普通路径；桥断了仍能走普通路径；
+- **快照输出量**：参数只有 `pageId`（`depth` 已删除）；未超限时原文返回且不建文件；超限时返回
+  `truncated/maxChars/totalChars/snapshotPath`、完整原文落盘且展示内容只含完整行；第一行超长时展示为空；
+  非法 `snapshotMaxChars` 回落到 5000；输出 schema 与运行时返回值经真实调用校验；
 - **client 半边的 harness**：把真实的 `client.js` 按页面的方式载入，用假 `__ModuleLoader__` + 假
   `ctx.sidebarRight`/`ctx.layout` 跑 `apply()`。断言 `hello` 用文档相对 URL、`open-tab` 只调一次
   `openTab`、`prepare-capture` 在"已可见/隐藏/collapsed/没有匹配标签页/toggle 抛错"五种情况下的动作序列、
@@ -660,7 +674,7 @@ node --test
 - **导航 = `browser_navigate`**：`url` 走 goto、`reload` 重进当前 URL 而不是 CLI 的 `reload` 命令、`back`/`forward` 走页面历史；
   `back`/`forward` 以导航后的 URL/title 判定是否真的移动（SPA 里 `page.goBack()` 可能返回 null，但 URL 已经变了）；
   无 URL 时明确报错；`dsh-app:` 目标仍拒；**可见操作先聚焦**：`prepare-capture`（切前台）→ 导航；
-- **配置读写**：12 个可编辑字段必须全部 `.volatile()`（另有隐藏的 `cdpPortFile`，不进表单），默认值与 README 一致，profile 覆盖经引用读取；
+- **配置读写**：13 个可编辑字段必须全部 `.volatile()`（另有隐藏的 `cdpPortFile`，不进表单），默认值与 README 一致，profile 覆盖经引用读取；
   写入只落 override 层（对照组：行内 `current` 已含 bundle 默认值，合并它会冻结默认值），`include:` 前缀的行 id 要能匹配，
   白名单用 `hasOwn`（`__proto__` 不能绕过），数字/布尔/空串校验；切片的 `configuration()` 被伪造时退回 `current`；
 - **配置卡片首帧**：用 harness 的 React stub 直接渲染一次 —— 卡片在首帧抛错会让整个插件页白屏，而且不报错；
@@ -760,7 +774,7 @@ node --test
 [`RELEASE.md`](https://github.com/damijun/browser-playwright/blob/main/RELEASE.md)：
 `npm publish` → 在干净 profile 安装验证 → `git tag v0.2.0` → 向 awesome-dsh-plugin 提一条 entry 的 PR。
 
-发布前 `npm test`（181 用例）与 `npm pack --dry-run` 已由 `prepublishOnly` / CI 覆盖。
+发布前 `npm test`（204 用例）与 `npm pack --dry-run` 已由 `prepublishOnly` / CI 覆盖。
 
 标题/描述/图标来自 `locale/{en,zh}.json` 与 `icon.svg`（矢量，插件页当封面用）。
 

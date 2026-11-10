@@ -23,6 +23,7 @@ export const EDITABLE_KEYS = {
   attachTimeoutMs: 'number',
   screenshotTimeoutMs: 'number',
   screenshotSettleMs: 'number',
+  snapshotMaxChars: 'number',
   debug: 'boolean',
 };
 
@@ -88,7 +89,14 @@ export function coerceConfigValue(key, raw) {
   if (kind === 'number') {
     const numeric = typeof raw === 'number' ? raw : Number(String(raw ?? '').trim());
     if (!Number.isFinite(numeric) || numeric < 0) return { ok: false, error: `"${key}" must be a non-negative number` };
-    return { ok: true, value: Math.round(numeric) };
+    const rounded = Math.round(numeric);
+    // Unlike the timeouts, a zero snapshot budget makes no sense: every call would
+    // write a file and show nothing. The read path falls back to the default for a
+    // hand-edited 0; the form refuses to write one in the first place.
+    if (key === 'snapshotMaxChars' && rounded < 1) {
+      return { ok: false, error: `"${key}" must be a positive whole number` };
+    }
+    return { ok: true, value: rounded };
   }
   const text = typeof raw === 'string' ? raw.trim() : raw === undefined || raw === null ? '' : String(raw);
   // `disabledTools` uses the empty string as "enable everything", so it is the one

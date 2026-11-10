@@ -5,6 +5,7 @@ import { CliBridge } from './cli.js';
 import { PageDriver } from './driver.js';
 import { newPageId, sessionTag } from './page-id.js';
 import { SessionManager, discover } from './sessions.js';
+import { resolveSnapshotMaxChars } from './snapshot.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -704,17 +705,45 @@ export class Runtime {
     });
   }
 
+  /**
+   * The character budget for one snapshot, read from `snapshotMaxChars`.
+   *
+   * Normalized here so a hand-edited patch cannot make the output unbounded (or
+   * empty): the driver only ever sees a positive integer.
+   *
+   * @returns {number}
+   */
+  snapshotMaxChars() {
+    return resolveSnapshotMaxChars(this.config.snapshotMaxChars);
+  }
+
+  /**
+   * Read a page's accessibility snapshot, bounded by `snapshotMaxChars`.
+   *
+   * The driver writes an over-budget snapshot to a file in full and returns a
+   * whole-line prefix; this layer only forwards the structured fields. Title and URL
+   * are deliberately not carried: the snapshot output is page content, and every
+   * extra field costs context.
+   *
+   * @param {{ pageId: string, signal?: AbortSignal, sessionId?: string }} request
+   */
   async snapshot(request) {
+    const maxChars = this.snapshotMaxChars();
     return this.onPage(
       request.pageId,
       async (driver, tab) => {
-        const detail = await driver.snapshot(tab, { depth: request.depth });
-        return {
-          title: tab.title,
-          url: tab.url,
-          refCount: detail.refCount,
-          snapshot: detail.snapshot,
+        const detail = await driver.snapshot(tab, { maxChars });
+        const snapshot = typeof detail.snapshot === 'string' ? detail.snapshot : '';
+        const value = {
+          snapshot,
+          truncated: detail.truncated === true,
+          maxChars,
+          totalChars: Number.isInteger(detail.totalChars) ? detail.totalChars : snapshot.length,
         };
+        if (value.truncated && typeof detail.snapshotPath === 'string' && detail.snapshotPath !== '') {
+          value.snapshotPath = detail.snapshotPath;
+        }
+        return value;
       },
       { signal: request.signal, sessionId: request.sessionId },
     );

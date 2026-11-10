@@ -13,6 +13,12 @@
   objects/arrays keep the compact JSON playwright-cli printed.
 - `browser_list` renders a JSON object (`count`, `pages[]` with `pageId`/`title`/`url`,
   optional `warning`) instead of one text line per page.
+- `browser_snapshot` takes `pageId` only: the `depth` argument and its pass-through are
+  removed, and playwright-cli always produces the complete snapshot.
+- `browser_snapshot` output is capped by the new `snapshotMaxChars` config (default
+  `5000`, editable in the settings card). A longer snapshot is saved in full to
+  `%TEMP%\dsh-browser-automation\snapshot-….txt` (UTF-8) and only the leading whole
+  lines are shown, with the absolute file path in the output.
 
 ## 0.2.0 — 2026-11-09
 

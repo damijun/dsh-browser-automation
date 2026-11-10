@@ -93,6 +93,15 @@ const fields = {
     .default(1_200)
     .description('Wait for a first frame after bringing a tab to the front for a screenshot, in milliseconds.'),
 
+  snapshotMaxChars: z
+    .number()
+    .default(5_000)
+    .description(
+      'Maximum number of snapshot characters shown to the model. A longer snapshot is saved in full to ' +
+        '%TEMP%\\dsh-browser-automation\\ and only its leading whole lines are shown. Values below 1 fall ' +
+        'back to 5000.',
+    ),
+
   debug: z.boolean().default(false).description('Print bridge and CLI diagnostics with console.debug.'),
 };
 
@@ -109,6 +118,7 @@ const VOLATILE = [
   'attachTimeoutMs',
   'screenshotTimeoutMs',
   'screenshotSettleMs',
+  'snapshotMaxChars',
   'debug',
 ];
 

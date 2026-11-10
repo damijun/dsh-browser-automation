@@ -45,6 +45,7 @@ test('every editable key has a declared type and nothing else is writable', () =
     'screenshotTimeoutMs',
     'session',
     'showSharedBadge',
+    'snapshotMaxChars',
     'timeoutMs',
   ]);
   assert.equal(coerceConfigValue('__proto__', 'x').ok, false);
@@ -61,6 +62,10 @@ test('values are validated and converted by their declared type', () => {
   assert.equal(coerceConfigValue('timeoutMs', -1).ok, false);
   assert.equal(coerceConfigValue('session', '   ').ok, false);
   assert.equal(coerceConfigValue('debug', 'yes').ok, false);
+  // A zero snapshot budget would write a file and show nothing, so the form refuses it.
+  assert.deepEqual(coerceConfigValue('snapshotMaxChars', '6000'), { ok: true, value: 6000 });
+  assert.equal(coerceConfigValue('snapshotMaxChars', 0).ok, false);
+  assert.equal(coerceConfigValue('snapshotMaxChars', -5).ok, false);
 });
 
 test('disabledTools is the one string field where empty is a valid value', () => {
