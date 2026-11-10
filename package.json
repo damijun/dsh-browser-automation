@@ -1,6 +1,6 @@
 {
   "name": "dsh-browser-automation",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Drive the Windows DSH Desktop right-sidebar browser through playwright-cli, with a per-session page identity.",
   "keywords": [
     "deepseek-harness",

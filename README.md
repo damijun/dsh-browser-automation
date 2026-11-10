@@ -688,29 +688,6 @@ node --test
   **每次 poll 刷新能力快照**：`mounted`/`visible` 会随"打开面板/切会话"变化，只在 `hello` 采集就会长期说谎）；
 - `SessionManager` 互斥、`discover` 的会话归属、`normalizeUrl` 规则、`samePage`、`sanitize` 的 JSON 安全。
 
-### 验收记录（2026-10-28，真机）
-
-> 以下记录来自**标题标记时代**，保留作为历史。页面身份后来改为只写 `window`（见 §4），
-> 其中"标题带标记"的描述已不代表现在的行为。
-
-| 用例 | 结果 |
-|---|---|
-| T1 `browser_open` 开真标签页、title 带 `[dshpg-…]` | ✅ 桥不可用时**报错且不动任何标签页**（已单测断言零 CLI 调用）；桥正常时新建标签页 |
-| T2 双会话隔离 | ✅ 子会话拿到 `dshpg-82ae30-…`；我这边 `scope=session` 看不到它，`scope=all` 能看到 |
-| T3 只传 pageId、内部解析索引 | ✅ 全程未手输索引 |
-| T4 `snapshot → click → fill/press → goto` | ✅ 点击跨域跳转到 iana.org 后标记仍在；`run_code`+`setContent` 后标记被补回 |
-| T4 `screenshot` | ✅ 可见标签页走 CLI 命令；隐藏标签页与收起侧边栏都能拍（见 §7） |
-| T5 索引漂移 | ✅ 关掉 index 1 后，原 index 2 的 pageId 仍能解析 |
-| T6 不依赖 `tab-new` / `targetId` | ✅ 单测断言源码中不出现 |
-| T7 `detach` 不杀 DSH | ✅ 应用存活；重新 attach 后需重新 open/claim（见 §7） |
-| T8 `browser_claim` | ✅ 接管"用户眼前那一页"：忽略 playwright 的 current tab，凭页面报告的可视 `<webview>` URL 找到它，返回原标题并换新 pageId；旧 pageId 立即失效，**其他标签页分毫未动** |
-| T9 关闭后 `PAGE_NOT_FOUND` | ✅ 错误信息带当前 tab 列表摘要与下一步建议 |
-| T10 解析单测 | ✅ 含 `[]()` 标题、`(current)`、多命中 |
-| `browser_status.modes` | ✅ 实测 `{open:true, claim:false}`（无可见浏览器页时 claim 明确不可用），claim 随之给出"先展开侧边栏"的报错 |
-| `browser_navigate` 真机 | ✅ `url` / `reload` / `back` / `forward` 都只作用于该 `pageId` 解析到的 tab；`reload` 不会刷新 DSH 页面，侧边栏其他页保持不动 |
-| `nodePath: auto` 真机 | ✅ 日志显示 `node from dsh-runtime`；`browser_status.cli.resolved.node` = `~/.dsh/dsh-runtimes/dsh-primary-runtime/.../node.exe`（v24.21.0）；新起的 CLI daemon 进程确实来自该路径，开页/列页正常 |
-
----
 
 ## 9. 排障
 
@@ -765,18 +742,6 @@ node --test
     -Target "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\@deepseek-ai\schemastery"
   ```
 
-### 发布
-
-包名 `dsh-browser-automation`，当前版本 `0.2.0`；`LICENSE`、`repository`/`homepage`/`bugs`、
-`engines.dsh`、`CHANGELOG.md` 已补齐。
-
-发布步骤（手动）见仓库根目录
-[`RELEASE.md`](https://github.com/damijun/browser-playwright/blob/main/RELEASE.md)：
-`npm publish` → 在干净 profile 安装验证 → `git tag v0.2.0` → 向 awesome-dsh-plugin 提一条 entry 的 PR。
-
-发布前 `npm test`（204 用例）与 `npm pack --dry-run` 已由 `prepublishOnly` / CI 覆盖。
-
-标题/描述/图标来自 `locale/{en,zh}.json` 与 `icon.svg`（矢量，插件页当封面用）。
 
 
 
